@@ -11,6 +11,13 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+
+def _safe_cagr(end_val: float, start_val: float, years: float) -> float:
+    """Return CAGR % safely; returns 0.0 on any zero/negative input."""
+    if start_val <= 0 or years <= 0 or end_val < 0:
+        return 0.0
+    return ((end_val / start_val) ** (1.0 / years) - 1) * 100
+
 # ── 路徑 ──────────────────────────────────────────────────────────────────────
 _HERE      = Path(__file__).parent
 CACHE_DIR  = _HERE / "stock_cache"
@@ -133,6 +140,22 @@ def fetch_adjusted_close(stock_id: str, token: str, force: bool = False) -> tupl
     return close, logs
 
 
+def fetch_stock_name(stock_id: str, token: str) -> str:
+    """
+    從 FinMind TaiwanStockInfo 查詢股票中文名稱。
+    查不到或失敗時直接回傳 stock_id。
+    """
+    if stock_id.upper() == "現金":
+        return "現金 / 貨幣市場"
+    try:
+        records = _finmind_get("TaiwanStockInfo", stock_id, token)
+        if records:
+            return records[0].get("stock_name", stock_id)
+    except Exception:
+        pass
+    return stock_id
+
+
 def fetch_dividend_history(stock_id: str, token: str) -> pd.DataFrame:
     """
     回傳股利發放歷史 DataFrame。
@@ -228,12 +251,13 @@ class ComparisonResult:
 
 
 def calc_lump_sum(close: pd.Series) -> LumpSumResult:
+    close  = close.replace(0, float("nan")).dropna()
     p0     = float(close.iloc[0])
     p_last = float(close.iloc[-1])
     years  = (close.index[-1] - close.index[0]).days / 365.25
     return LumpSumResult(
-        total_return_pct = (p_last / p0 - 1) * 100,
-        cagr_pct         = ((p_last / p0) ** (1 / years) - 1) * 100,
+        total_return_pct = (p_last / p0 - 1) * 100 if p0 > 0 else 0.0,
+        cagr_pct         = _safe_cagr(p_last, p0, years),
         years            = years,
         inception_date   = close.index[0],
         last_date        = close.index[-1],
@@ -249,7 +273,9 @@ def calc_dca(close: pd.Series, monthly_dca: float) -> DCAResult:
     result      = DCAResult(monthly_dca=monthly_dca)
 
     for i, (ts, price) in enumerate(monthly_first.items()):
-        yr           = ts.year
+        yr = ts.year
+        if price <= 0:
+            continue
         units_total += monthly_dca / price
         cost_total  += monthly_dca
 
@@ -305,13 +331,13 @@ def calc_multi_compare(
         p_last = float(sliced.iloc[-1])
         years  = (sliced.index[-1] - sliced.index[0]).days / 365.25
 
-        total_ret = (p_last / p0 - 1) * 100
-        cagr      = ((p_last / p0) ** (1 / years) - 1) * 100
+        total_ret = (p_last / p0 - 1) * 100 if p0 > 0 else 0.0
+        cagr      = _safe_cagr(p_last, p0, years)
 
         # DCA 模擬（從共同起始日）
         dca = calc_dca(sliced, monthly_dca)
         f   = dca.final
-        dca_cagr = ((f.value / f.cost_cum) ** (1 / years) - 1) * 100
+        dca_cagr = _safe_cagr(f.value, f.cost_cum, years)
 
         records.append(ETFCompareRecord(
             stock_id        = sid,
@@ -431,9 +457,14 @@ def calc_return_vol(close: pd.Series) -> tuple[float, float]:
     從日收盤價計算年化報酬（CAGR）與年化波動度（日 log return std × √252）。
     回傳 (cagr, annual_vol)，均為小數（非百分比）。
     """
-    years     = (close.index[-1] - close.index[0]).days / 365.25
-    cagr      = float((close.iloc[-1] / close.iloc[0]) ** (1 / years) - 1)
-    log_ret   = np.log(close / close.shift(1)).dropna()
+    # 移除 0 值與 NaN（停牌日或資料缺漏會造成 log(0) 錯誤）
+    close = close.replace(0, float("nan")).dropna()
+    if len(close) < 2:
+        return 0.0, 0.0
+    years      = (close.index[-1] - close.index[0]).days / 365.25
+    cagr       = float((close.iloc[-1] / close.iloc[0]) ** (1 / years) - 1)
+    ratio      = (close / close.shift(1)).replace(0, float("nan")).dropna()
+    log_ret    = np.log(ratio).dropna()
     annual_vol = float(log_ret.std() * np.sqrt(252))
     return cagr, annual_vol
 
@@ -517,14 +548,14 @@ def calc_comparison(close: pd.Series, monthly_dca: float) -> ComparisonResult:
     dca  = calc_dca(close, monthly_dca)
     f    = dca.final
 
-    lump_final = f.cost_cum / lump.p0 * lump.p_last
-    dca_cagr   = ((f.value / f.cost_cum) ** (1 / lump.years) - 1) * 100
+    lump_final = (f.cost_cum / lump.p0 * lump.p_last) if lump.p0 > 0 else 0.0
+    dca_cagr   = _safe_cagr(f.value, f.cost_cum, lump.years)
 
     return ComparisonResult(
         lump                 = lump,
         dca                  = dca,
         lump_same_cost_final = lump_final,
-        lump_same_cost_ret   = (lump_final / f.cost_cum - 1) * 100,
-        lump_same_cost_cagr  = ((lump_final / f.cost_cum) ** (1 / lump.years) - 1) * 100,
+        lump_same_cost_ret   = (lump_final / f.cost_cum - 1) * 100 if f.cost_cum > 0 else 0.0,
+        lump_same_cost_cagr  = _safe_cagr(lump_final, f.cost_cum, lump.years),
         dca_cagr_pct         = dca_cagr,
     )

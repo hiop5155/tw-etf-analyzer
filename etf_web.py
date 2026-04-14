@@ -7,6 +7,11 @@ for pkg in ["streamlit", "pandas", "plotly", "openpyxl"]:
         __import__(pkg)
     except ImportError:
         subprocess.check_call([sys.executable, "-m", "pip", "install", pkg, "-q"])
+try:
+    from streamlit_local_storage import LocalStorage
+except ImportError:
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "streamlit-local-storage", "-q"])
+    from streamlit_local_storage import LocalStorage
 
 import streamlit as st
 import pandas as pd
@@ -15,6 +20,7 @@ from etf_core import (
     load_token, fetch_adjusted_close, fetch_dividend_history,
     calc_comparison, calc_multi_compare, calc_target_monthly,
     simulate_gk, simulate_gk_montecarlo, calc_return_vol,
+    fetch_stock_name,
 )
 
 st.set_page_config(page_title="ETF 績效分析", page_icon="📈", layout="wide")
@@ -26,12 +32,94 @@ if not token:
     st.error("找不到 FINMIND_TOKEN，請在 .env 檔設定：`FINMIND_TOKEN=你的token`")
     st.stop()
 
+# ── localStorage 持久化設定 ────────────────────────────────────────────────────
+import json as _json
+_ls = LocalStorage()
+
+# 計算 render 次數（session 重置時歸零）。
+# LocalStorage JS 元件在 render 1 時載入，觸發 rerun → render 2 起 getItem 才有值。
+# render >= 2 時即使 localStorage 完全空白，也要解鎖寫入（否則永遠存不了）。
+if "_ls_render" not in st.session_state:
+    st.session_state["_ls_render"] = 0
+st.session_state["_ls_render"] += 1
+
+# Step 1: seed session state with hardcoded defaults (only on very first run)
+_DEFAULTS: dict = {
+    "_w_sid":        "00631L",
+    "_w_dca":        25000,
+    "_w_rasset":     1000,
+    "_w_ryears":     30,
+    "_w_rinf":       2.0,
+    "_w_rrate":      6.0,
+    "_w_rguard":     20.0,
+    "preset_choice": "保守配息型（預設）",
+    # Tab 2 目標試算
+    "_w_target_wan":   1000,
+    "_w_target_years": 10,
+    # Tab 4 多 ETF 比較
+    "_w_cmp_0": "", "_w_cmp_1": "", "_w_cmp_2": "",
+    "_w_cmp_3": "", "_w_cmp_4": "",
+}
+for _k, _v in _DEFAULTS.items():
+    if _k not in st.session_state:
+        st.session_state[_k] = _v
+
+# Step 2: on first successful localStorage read, overwrite with saved values.
+# All settings packed in one JSON key ("etf_all") to use only one setItem call.
+if not st.session_state.get("_ls_applied"):
+    _raw_all = _ls.getItem("etf_all")
+
+    if _raw_all is not None:
+        # localStorage 有資料 → 還原
+        try:
+            _saved = _json.loads(_raw_all)
+            _field_map = {
+                "_w_sid":          (str,   "sid"),
+                "_w_dca":          (int,   "dca"),
+                "_w_rasset":       (int,   "r_asset"),
+                "_w_ryears":       (int,   "r_years"),
+                "_w_rinf":         (float, "r_inf"),
+                "_w_rrate":        (float, "r_rate"),
+                "_w_rguard":       (float, "r_guard"),
+                "preset_choice":   (str,   "r_preset"),
+                "_w_target_wan":   (int,   "target_wan"),
+                "_w_target_years": (int,   "target_years"),
+                "_w_cmp_0":        (str,   "cmp_0"),
+                "_w_cmp_1":        (str,   "cmp_1"),
+                "_w_cmp_2":        (str,   "cmp_2"),
+                "_w_cmp_3":        (str,   "cmp_3"),
+                "_w_cmp_4":        (str,   "cmp_4"),
+            }
+            for ss_key, (cast, ls_key) in _field_map.items():
+                if ls_key in _saved:
+                    try:
+                        st.session_state[ss_key] = cast(_saved[ls_key])
+                    except (ValueError, TypeError):
+                        pass
+            if "r_custom" in _saved and isinstance(_saved["r_custom"], list):
+                st.session_state["_custom_base"] = _saved["r_custom"]
+                st.session_state.pop("retire_portfolio_custom", None)
+                st.session_state["_custom_ls_done"] = True
+        except Exception:
+            pass
+        st.session_state["_ls_applied"] = True
+        # prev 設為 "" → 底部一定觸發一次 setItem，確保 etf_all 與 session 同步
+        st.session_state["_lsprev_etf_all"] = ""
+
+    elif st.session_state["_ls_render"] >= 2:
+        # JS 元件已載入但 localStorage 是空白（全新瀏覽器 / 清除過）→ 解鎖寫入
+        st.session_state["_ls_applied"] = True
+        st.session_state["_lsprev_etf_all"] = ""
+
 # ── 全域輸入（所有 tab 共用） ─────────────────────────────────────────────────
 c1, c2, c3 = st.columns([2, 2, 1])
-stock_id    = c1.text_input("股票代號（不需要 .TW）", value="00631L").upper().removesuffix(".TW")
-monthly_dca = c2.number_input("每月定期定額（TWD）", min_value=1000, value=25000, step=1000)
+stock_id    = c1.text_input("股票代號（不需要 .TW）",
+                             key="_w_sid").upper().removesuffix(".TW")
+monthly_dca = c2.number_input("每月定期定額（TWD）", min_value=1000,
+                               step=1000, key="_w_dca")
 c3.write(""); c3.write("")
 refresh = c3.button("🔄 重新下載", width="stretch")
+
 
 st.divider()
 
@@ -189,8 +277,8 @@ with tab2:
     st.caption(f"以 {stock_id} 歷史年化報酬 **{lump_full.cagr_pct:.2f}%** 為基準試算")
 
     tc1, tc2 = st.columns(2)
-    target_wan  = tc1.number_input("目標金額（萬 TWD）", min_value=1, value=1000, step=100)
-    target_years = tc2.number_input("投資年限（年）", min_value=1, max_value=50, value=10, step=1)
+    target_wan   = tc1.number_input("目標金額（萬 TWD）", min_value=1, step=100, key="_w_target_wan")
+    target_years = tc2.number_input("投資年限（年）", min_value=1, max_value=50, step=1, key="_w_target_years")
 
     target_twd = target_wan * 10_000
     base = calc_target_monthly(target_twd, target_years, lump_full.cagr_pct)
@@ -217,14 +305,7 @@ with tab2:
             "總獲利 (TWD)"  : f"{res['total_gain']:,.0f}",
         })
     sens_df = pd.DataFrame(scenario_rows)
-    st.dataframe(
-        sens_df.style.map(
-            lambda v: "font-weight: bold; background-color: #e8f4ea"
-            if isinstance(v, str) and v == "100% 歷史報酬" else "",
-            subset=["情境"]
-        ),
-        width="stretch", hide_index=True
-    )
+    st.dataframe(sens_df, width="stretch", hide_index=True)
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -294,10 +375,8 @@ with tab4:
     st.caption("選 2～5 檔 ETF，以成立最晚的日期為共同起點比較報酬")
 
     cols = st.columns(5)
-    default_ids = [stock_id, "", "", "", ""]
     inputs = [
-        cols[i].text_input(f"ETF {i+1}", value=default_ids[i], key=f"cmp_{i}",
-                           placeholder="例如 0050")
+        cols[i].text_input(f"ETF {i+1}", key=f"_w_cmp_{i}", placeholder="例如 0050")
         for i in range(5)
     ]
     ids = [v.strip().upper().removesuffix(".TW") for v in inputs if v.strip()]
@@ -418,17 +497,22 @@ with tab5:
     st.markdown("#### ⚙️ 基本參數")
     pc1, pc2, pc3 = st.columns(3)
     retire_asset_wan = pc1.number_input(
-        "退休起始資產（萬 TWD）", min_value=100, value=1000, step=100,
-        help="可直接填入「目標試算」頁的目標金額",
+        "退休起始資產（萬 TWD）", min_value=100, step=100,
+        key="_w_rasset", help="可直接填入「目標試算」頁的目標金額",
     )
-    retire_years  = pc2.number_input("模擬年數", min_value=5, max_value=60, value=30, step=5)
-    inflation_pct = pc3.number_input("通膨率 %", min_value=0.0, max_value=10.0, value=2.0, step=0.5)
+    retire_years  = pc2.number_input("模擬年數", min_value=5, max_value=60,
+                                     step=5, key="_w_ryears")
+    inflation_pct = pc3.number_input("通膨率 %", min_value=0.0, max_value=10.0,
+                                     step=0.5, key="_w_rinf")
 
     pg1, pg2, pg3 = st.columns(3)
-    init_rate_pct = pg1.number_input("初始提領率 %", min_value=1.0, max_value=15.0, value=6.0, step=0.5)
+    init_rate_pct = pg1.number_input("初始提領率 %", min_value=1.0, max_value=15.0,
+                                     step=0.5, key="_w_rrate")
     _init_monthly = retire_asset_wan * 10_000 * init_rate_pct / 100 / 12
     pg2.number_input("初始月提領額（TWD）", value=_init_monthly, disabled=True, format="%.0f")
-    guardrail_pct = pg3.number_input("護欄寬度 %（上下各）", min_value=5.0, max_value=50.0, value=20.0, step=5.0)
+    guardrail_pct = pg3.number_input("護欄寬度 %（上下各）", min_value=5.0, max_value=50.0,
+                                     step=5.0, key="_w_rguard")
+
 
     st.caption(
         f"護欄觸發：提領率 > **{init_rate_pct*(1+guardrail_pct/100):.2f}%** 減10%；"
@@ -457,22 +541,53 @@ with tab5:
         """)
 
     if preset_choice == "自訂":
-        _init_data = _PRESETS["保守配息型（預設）"]
+        # 若 session 內沒有 base（第一次或清掉了），用預設組合
+        if "_custom_base" not in st.session_state:
+            st.session_state["_custom_base"] = [
+                {"ETF代號": row["ETF代號"], "配置比例 %": row["配置比例 %"]}
+                for row in _PRESETS["保守配息型（預設）"]
+            ]
+
+        custom_editor = st.data_editor(
+            pd.DataFrame(st.session_state["_custom_base"]),
+            num_rows="dynamic",
+            width="stretch",
+            key="retire_portfolio_custom",
+            column_config={
+                "ETF代號":    st.column_config.TextColumn(
+                    help="台灣 ETF 代號，現金請填「現金」",
+                    required=True,
+                ),
+                "配置比例 %": st.column_config.NumberColumn(
+                    min_value=0, max_value=100, step=5, format="%.0f",
+                ),
+            },
+        )
+        # 把 data_editor 的 DataFrame return value 存進 session state，
+        # 讓底部的存檔邏輯能讀到（session_state["retire_portfolio_custom"] 存的是 delta dict，不是 DataFrame）
+        st.session_state["_custom_df_value"] = custom_editor
+
+        # 自動帶入資產名稱（從 FinMind TaiwanStockInfo 查詢）
+        with st.spinner("查詢股票名稱..."):
+            custom_editor["資產名稱"] = custom_editor["ETF代號"].apply(
+                lambda c: fetch_stock_name(str(c).strip().upper(), token) if str(c).strip() else ""
+            )
+        portfolio_df = custom_editor[["資產名稱", "ETF代號", "配置比例 %"]]
     else:
         _init_data = _PRESETS[preset_choice]
-
-    portfolio_df = st.data_editor(
-        pd.DataFrame(_init_data),
-        num_rows="dynamic",
-        width="stretch",
-        key=f"retire_portfolio_{preset_choice}",
-        column_config={
-            "資產名稱":   st.column_config.TextColumn(),
-            "ETF代號":    st.column_config.TextColumn(help="台灣 ETF 代號，現金請填「現金」"),
-            "配置比例 %": st.column_config.NumberColumn(min_value=0, max_value=100, step=5, format="%.0f"),
-        },
-        disabled=["資產名稱", "ETF代號"] if preset_choice != "自訂" else [],
-    )
+        portfolio_df = st.data_editor(
+            pd.DataFrame(_init_data),
+            num_rows="fixed",
+            width="stretch",
+            key=f"retire_portfolio_{preset_choice}",
+            column_config={
+                "資產名稱":   st.column_config.TextColumn(disabled=True),
+                "ETF代號":    st.column_config.TextColumn(disabled=True),
+                "配置比例 %": st.column_config.NumberColumn(
+                    min_value=0, max_value=100, step=5, format="%.0f",
+                ),
+            },
+        )
 
     total_alloc = portfolio_df["配置比例 %"].sum()
     if abs(total_alloc - 100) > 0.5:
@@ -482,38 +597,45 @@ with tab5:
     # ── 自動計算歷史報酬與波動度 ─────────────────────────────────────────────
     st.markdown("#### 📡 歷史報酬自動計算（從 FinMind）")
 
-    etf_stats: dict[str, tuple[float, float, str]] = {}   # code → (cagr, vol, period)
+    etf_stats: dict[str, tuple[float, float, str, float]] = {}
     stat_rows = []
     fetch_errors = []
+    _codes = [
+        str(r["ETF代號"]).strip().upper()
+        for _, r in portfolio_df.iterrows()
+        if str(r["ETF代號"]).strip().upper() != "現金"
+    ]
+    _spinner_msg = f"載入 {', '.join(_codes)} 歷史資料..." if _codes else "計算中..."
 
-    for _, row in portfolio_df.iterrows():
-        code = str(row["ETF代號"]).strip().upper()
-        if code == "現金":
-            etf_stats[code] = (_CASH_RETURN, _CASH_VOL, "固定假設", 999)
-            stat_rows.append({
-                "資產名稱": row["資產名稱"],
-                "ETF代號":  "現金",
-                "資料期間": "固定假設",
-                "歷史CAGR %": f"{_CASH_RETURN*100:.2f}",
-                "年化波動度 %": f"{_CASH_VOL*100:.2f}",
-            })
-        else:
-            try:
-                close_r, _ = fetch_adjusted_close(code, token)
-                cagr, vol  = calc_return_vol(close_r)
-                period     = f"{close_r.index[0].date()} ～ {close_r.index[-1].date()}"
-                yrs        = (close_r.index[-1] - close_r.index[0]).days / 365.25
-                warn       = " ⚠️ 歷史<10年" if yrs < 10 else ""
-                etf_stats[code] = (cagr, vol, period, yrs)
+    with st.spinner(_spinner_msg):
+        for _, row in portfolio_df.iterrows():
+            code = str(row["ETF代號"]).strip().upper()
+            if code == "現金":
+                etf_stats[code] = (_CASH_RETURN, _CASH_VOL, "固定假設", 999)
                 stat_rows.append({
-                    "資產名稱":    row["資產名稱"],
-                    "ETF代號":     code,
-                    "資料期間":    period + warn,
-                    "歷史CAGR %":  f"{cagr*100:.2f}",
-                    "年化波動度 %": f"{vol*100:.2f}",
+                    "資產名稱":     row["資產名稱"],
+                    "ETF代號":      "現金",
+                    "資料期間":     "固定假設",
+                    "歷史CAGR %":   f"{_CASH_RETURN*100:.2f}",
+                    "年化波動度 %": f"{_CASH_VOL*100:.2f}",
                 })
-            except Exception as e:
-                fetch_errors.append(f"{code}：{e}")
+            else:
+                try:
+                    close_r, _ = fetch_adjusted_close(code, token)
+                    cagr, vol  = calc_return_vol(close_r)
+                    period     = f"{close_r.index[0].date()} ～ {close_r.index[-1].date()}"
+                    yrs        = (close_r.index[-1] - close_r.index[0]).days / 365.25
+                    warn       = " ⚠️ 歷史<10年" if yrs < 10 else ""
+                    etf_stats[code] = (cagr, vol, period, yrs)
+                    stat_rows.append({
+                        "資產名稱":     row["資產名稱"],
+                        "ETF代號":      code,
+                        "資料期間":     period + warn,
+                        "歷史CAGR %":   f"{cagr*100:.2f}",
+                        "年化波動度 %": f"{vol*100:.2f}",
+                    })
+                except Exception as e:
+                    fetch_errors.append(f"{code}：{e}")
 
     for err in fetch_errors:
         st.error(err)
@@ -722,3 +844,40 @@ with tab5:
         file_name= f"退休提領MC_{retire_asset_wan}萬_{retire_years}年.csv",
         mime     = "text/csv",
     )
+
+# ── 寫入 localStorage（單一 key 打包，只觸發最多一次 rerun）────────────────────
+_ls_all: dict = {
+    "sid":          stock_id,
+    "dca":          int(monthly_dca),
+    "r_asset":      int(st.session_state.get("_w_rasset", 1000)),
+    "r_years":      int(st.session_state.get("_w_ryears", 30)),
+    "r_inf":        float(st.session_state.get("_w_rinf", 2.0)),
+    "r_rate":       float(st.session_state.get("_w_rrate", 6.0)),
+    "r_guard":      float(st.session_state.get("_w_rguard", 20.0)),
+    "r_preset":     str(st.session_state.get("preset_choice", "保守配息型（預設）")),
+    "target_wan":   int(st.session_state.get("_w_target_wan", 1000)),
+    "target_years": int(st.session_state.get("_w_target_years", 10)),
+    "cmp_0":        str(st.session_state.get("_w_cmp_0", "")),
+    "cmp_1":        str(st.session_state.get("_w_cmp_1", "")),
+    "cmp_2":        str(st.session_state.get("_w_cmp_2", "")),
+    "cmp_3":        str(st.session_state.get("_w_cmp_3", "")),
+    "cmp_4":        str(st.session_state.get("_w_cmp_4", "")),
+}
+_custom_df = st.session_state.get("_custom_df_value")  # data_editor return value（DataFrame）
+if _custom_df is not None and hasattr(_custom_df, "columns"):
+    try:
+        _ls_all["r_custom"] = _json.loads(
+            _custom_df[["ETF代號", "配置比例 %"]].to_json(orient="records", force_ascii=False)
+        )
+    except Exception:
+        pass
+
+_ls_new_val = _json.dumps(_ls_all, ensure_ascii=False)
+# 只有 _ls_applied=True（localStorage 已讀完）後才允許寫入，避免 render 1 的 defaults
+# 蓋掉 localStorage 裡已存的值。
+# 用遞增 counter 當 key，讓每次 setItem 都強制重新掛載 React 元件（同 key 會被快取跳過）。
+if st.session_state.get("_ls_applied") and st.session_state.get("_lsprev_etf_all") != _ls_new_val:
+    _n = st.session_state.get("_ls_save_n", 0) + 1
+    st.session_state["_ls_save_n"] = _n
+    _ls.setItem("etf_all", _ls_new_val, key=f"_lssave_{_n}")
+    st.session_state["_lsprev_etf_all"] = _ls_new_val
