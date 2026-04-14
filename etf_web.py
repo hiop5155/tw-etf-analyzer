@@ -55,16 +55,16 @@ st.session_state["_ls_render"] += 1
 
 # Step 1: seed session state with hardcoded defaults (only on very first run)
 _DEFAULTS: dict = {
-    "_w_sid":        "00631L",
-    "_w_dca":        25000,
-    "_w_rasset":     1000,
+    "_w_sid":        "0050",
+    "_w_dca":        10000,
+    "_w_rasset":     2000,
     "_w_ryears":     30,
     "_w_rinf":       2.0,
-    "_w_rrate":      6.0,
+    "_w_rrate":      5.0,
     "_w_rguard":     20.0,
     "preset_choice": "保守配息型（預設）",
     # Tab 2 目標試算
-    "_w_target_wan":   1000,
+    "_w_target_wan":   500,
     "_w_target_years": 10,
     # Tab 4 多檔比較
     "_w_cmp_0": "", "_w_cmp_1": "", "_w_cmp_2": "",
