@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""ETF 績效分析 — CLI"""
+"""台股績效分析 — CLI"""
 
 import sys, io, argparse, unicodedata
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
@@ -26,7 +26,7 @@ def token_missing():
     print("    macOS/Linux： export FINMIND_TOKEN=你的token")
 
 def main():
-    parser = argparse.ArgumentParser(description="ETF 績效分析")
+    parser = argparse.ArgumentParser(description="台股績效分析")
     parser.add_argument("stock_id",   nargs="?")
     parser.add_argument("dca_amount", nargs="?", type=float)
     parser.add_argument("--refresh",  action="store_true", help="強制重新下載（忽略快取）")

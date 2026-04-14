@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-ETF 核心邏輯：資料下載、快取、還原股價、績效計算
+台股核心邏輯：資料下載、快取、還原股價、績效計算
 不含任何 UI / 輸出邏輯，CLI 與 Web 共用此模組。
 """
 
@@ -140,19 +140,29 @@ def fetch_adjusted_close(stock_id: str, token: str, force: bool = False) -> tupl
     return close, logs
 
 
+_stock_name_cache: dict[str, str] = {}  # process-level cache；stock name 不常變，不需 TTL
+
 def fetch_stock_name(stock_id: str, token: str) -> str:
     """
     從 FinMind TaiwanStockInfo 查詢股票中文名稱。
     查不到或失敗時直接回傳 stock_id。
+    結果快取在 process 記憶體中，避免每次 Streamlit rerun 都打 API。
     """
-    if stock_id.upper() == "現金":
-        return "現金 / 貨幣市場"
+    key = stock_id.upper()
+    if key in _stock_name_cache:
+        return _stock_name_cache[key]
+    if key == "現金":
+        _stock_name_cache[key] = "現金 / 貨幣市場"
+        return _stock_name_cache[key]
     try:
         records = _finmind_get("TaiwanStockInfo", stock_id, token)
         if records:
-            return records[0].get("stock_name", stock_id)
+            name = records[0].get("stock_name", stock_id)
+            _stock_name_cache[key] = name
+            return name
     except Exception:
         pass
+    _stock_name_cache[key] = stock_id
     return stock_id
 
 
@@ -315,8 +325,8 @@ def calc_multi_compare(
     monthly_dca: float,
 ) -> list[ETFCompareRecord]:
     """
-    多 ETF 績效比較。
-    以各 ETF 中成立最晚的日期為共同起始點，統一比較。
+    多檔績效比較。
+    以各標的中上市最晚的日期為共同起始點，統一比較。
     """
     # 共同起始日 = 最晚的第一筆資料日期
     common_start = max(s.index[0] for s in closes.values())

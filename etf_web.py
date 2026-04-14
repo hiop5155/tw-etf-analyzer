@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""ETF 績效分析 — Web UI (Streamlit)"""
+"""台股績效分析 — Web UI (Streamlit)"""
 
 import subprocess, sys, io
 for pkg in ["streamlit", "pandas", "plotly", "openpyxl"]:
@@ -23,8 +23,18 @@ from etf_core import (
     fetch_stock_name,
 )
 
-st.set_page_config(page_title="ETF 績效分析", page_icon="📈", layout="wide")
-st.title("📈 ETF 績效分析")
+# ── Streamlit 記憶體快取包裝（避免每次 rerun 重新讀 CSV / 打 API）─────────────
+@st.cache_data(ttl=86400, show_spinner=False)
+def _cached_adjusted_close(stock_id: str, token: str):
+    """一般讀取，優先從 st.cache_data → 再從磁碟 CSV → 最後才打 API。"""
+    return fetch_adjusted_close(stock_id, token, force=False)
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def _cached_dividend_history(stock_id: str, token: str):
+    return fetch_dividend_history(stock_id, token)
+
+st.set_page_config(page_title="台股績效分析", page_icon="📈", layout="wide")
+st.title("📈 台股績效分析")
 
 # ── Token ─────────────────────────────────────────────────────────────────────
 token = load_token()
@@ -56,7 +66,7 @@ _DEFAULTS: dict = {
     # Tab 2 目標試算
     "_w_target_wan":   1000,
     "_w_target_years": 10,
-    # Tab 4 多 ETF 比較
+    # Tab 4 多檔比較
     "_w_cmp_0": "", "_w_cmp_1": "", "_w_cmp_2": "",
     "_w_cmp_3": "", "_w_cmp_4": "",
 }
@@ -130,13 +140,19 @@ if not stock_id:
 # ── 載入完整資料（所有 tab 共用） ────────────────────────────────────────────
 with st.spinner(f"載入 {stock_id} 資料..."):
     try:
-        close_full, _ = fetch_adjusted_close(stock_id, token, force=refresh)
+        if refresh:
+            # 強制重抓：清除 st.cache_data，直接打 API 更新磁碟快取
+            _cached_adjusted_close.clear()
+            _cached_dividend_history.clear()
+            close_full, _ = fetch_adjusted_close(stock_id, token, force=True)
+        else:
+            close_full, _ = _cached_adjusted_close(stock_id, token)
     except Exception as e:
         st.error(str(e)); st.stop()
 
 # ── 分頁 ──────────────────────────────────────────────────────────────────────
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
-    "📊 績效分析", "🎯 目標試算", "💰 股利歷史", "📈 多 ETF 比較", "🏖️ 退休提領模擬"
+    "📊 績效分析", "🎯 目標試算", "💰 股利歷史", "📈 多檔比較", "🏖️ 退休提領模擬"
 ])
 
 
@@ -147,7 +163,7 @@ with tab1:
     min_date = close_full.index[0].date()
     max_date = close_full.index[-1].date()
 
-    with st.expander("⚙️ 自訂分析起始日（預設：ETF 成立日）", expanded=False):
+    with st.expander("⚙️ 自訂分析起始日（預設：上市日）", expanded=False):
         custom_start = st.date_input(
             "分析起始日",
             value=min_date,
@@ -156,7 +172,7 @@ with tab1:
             key="custom_start_date",
         )
         if custom_start > min_date:
-            st.caption(f"ETF 成立日為 {min_date}，目前從 {custom_start} 開始分析")
+            st.caption(f"上市日為 {min_date}，目前從 {custom_start} 開始分析")
 
     close = close_full[close_full.index >= pd.Timestamp(custom_start)]
     if len(close) < 2:
@@ -245,7 +261,7 @@ with tab1:
         return buf.getvalue()
 
     excel_bytes = build_excel(stock_id, monthly_dca, lump, result, df, cmp)
-    filename    = f"{stock_id}_ETF分析_{lump.last_date.strftime('%Y%m%d')}.xlsx"
+    filename    = f"{stock_id}_績效分析_{lump.last_date.strftime('%Y%m%d')}.xlsx"
 
     dl1, dl2 = st.columns(2)
     dl1.download_button(
@@ -315,10 +331,10 @@ with tab3:
     st.subheader("💰 股利發放歷史")
 
     with st.spinner("載入股利資料..."):
-        div_df = fetch_dividend_history(stock_id, token)
+        div_df = _cached_dividend_history(stock_id, token)
 
     if div_df.empty:
-        st.info(f"{stock_id} 無股利發放記錄（可能為非配息型 ETF）")
+        st.info(f"{stock_id} 無股利發放記錄（可能為非配息型股票/ETF）")
     else:
         avg_yield = div_df["yield_pct"].mean()
         total_div = div_df["cash_dividend"].sum()
@@ -368,15 +384,15 @@ with tab3:
 
 
 # ════════════════════════════════════════════════════════════════════════════
-# Tab 4：多 ETF 比較
+# Tab 4：多檔比較
 # ════════════════════════════════════════════════════════════════════════════
 with tab4:
-    st.subheader("📊 多 ETF 績效比較")
-    st.caption("選 2～5 檔 ETF，以成立最晚的日期為共同起點比較報酬")
+    st.subheader("📊 多檔績效比較")
+    st.caption("選 2～5 檔股票／ETF，以上市最晚的日期為共同起點比較報酬")
 
     cols = st.columns(5)
     inputs = [
-        cols[i].text_input(f"ETF {i+1}", key=f"_w_cmp_{i}", placeholder="例如 0050")
+        cols[i].text_input(f"代號 {i+1}", key=f"_w_cmp_{i}", placeholder="例如 0050")
         for i in range(5)
     ]
     ids = [v.strip().upper().removesuffix(".TW") for v in inputs if v.strip()]
@@ -389,7 +405,7 @@ with tab4:
             errors = []
             for sid in ids:
                 try:
-                    c, _ = fetch_adjusted_close(sid, token)
+                    c, _ = _cached_adjusted_close(sid, token)
                     closes[sid] = c
                 except Exception as e:
                     errors.append(f"{sid}：{e}")
@@ -412,13 +428,13 @@ with tab4:
             fig2.add_hline(y=100, line_dash="dot", line_color="gray")
             fig2.update_layout(
                 xaxis_title="日期", yaxis_title="指數（起始=100）",
-                hovermode="x unified", legend_title="ETF",
+                hovermode="x unified", legend_title="代號",
             )
             st.plotly_chart(fig2, width="stretch")
 
             cmp_df = pd.DataFrame([{
-                "ETF"          : r.stock_id,
-                "原始成立日"   : str(r.inception_date.date()),
+                "代號"         : r.stock_id,
+                "原始上市日"   : str(r.inception_date.date()),
                 "共同起始日"   : str(r.common_start.date()),
                 "比較年數"     : f"{r.years:.2f}",
                 "總報酬%"      : f"{r.total_return_pct:.1f}",
@@ -442,7 +458,7 @@ with tab4:
             st.download_button(
                 label    = "⬇️ 下載比較結果 CSV",
                 data     = cmp_csv,
-                file_name= f"ETF比較_{'_'.join(r.stock_id for r in records)}_{last_date.strftime('%Y%m%d')}.csv",
+                file_name= f"多檔比較_{'_'.join(r.stock_id for r in records)}_{last_date.strftime('%Y%m%d')}.csv",
                 mime     = "text/csv",
             )
 
@@ -460,30 +476,30 @@ with tab5:
     # 預設組合定義
     _PRESETS = {
         "保守配息型（預設）": [
-            {"資產名稱": "元大台灣高股息",    "ETF代號": "0056",   "配置比例 %": 30},
-            {"資產名稱": "國泰永續高股息",    "ETF代號": "00878",  "配置比例 %": 20},
-            {"資產名稱": "元大投資級公司債",  "ETF代號": "00720B", "配置比例 %": 30},
-            {"資產名稱": "元大美債20年",      "ETF代號": "00679B", "配置比例 %": 10},
-            {"資產名稱": "現金 / 貨幣市場",   "ETF代號": "現金",   "配置比例 %": 10},
+            {"資產名稱": "元大台灣高股息",    "代號": "0056",   "配置比例 %": 30},
+            {"資產名稱": "國泰永續高股息",    "代號": "00878",  "配置比例 %": 20},
+            {"資產名稱": "元大投資級公司債",  "代號": "00720B", "配置比例 %": 30},
+            {"資產名稱": "元大美債20年",      "代號": "00679B", "配置比例 %": 10},
+            {"資產名稱": "現金 / 貨幣市場",   "代號": "現金",   "配置比例 %": 10},
         ],
         "債券優先型": [
-            {"資產名稱": "元大投資級公司債",  "ETF代號": "00720B", "配置比例 %": 40},
-            {"資產名稱": "元大美債20年",      "ETF代號": "00679B", "配置比例 %": 25},
-            {"資產名稱": "元大台灣高股息",    "ETF代號": "0056",   "配置比例 %": 25},
-            {"資產名稱": "現金 / 貨幣市場",   "ETF代號": "現金",   "配置比例 %": 10},
+            {"資產名稱": "元大投資級公司債",  "代號": "00720B", "配置比例 %": 40},
+            {"資產名稱": "元大美債20年",      "代號": "00679B", "配置比例 %": 25},
+            {"資產名稱": "元大台灣高股息",    "代號": "0056",   "配置比例 %": 25},
+            {"資產名稱": "現金 / 貨幣市場",   "代號": "現金",   "配置比例 %": 10},
         ],
         "全高股息型": [
-            {"資產名稱": "元大台灣高股息",    "ETF代號": "0056",   "配置比例 %": 35},
-            {"資產名稱": "國泰永續高股息",    "ETF代號": "00878",  "配置比例 %": 30},
-            {"資產名稱": "元大台灣高息低波",  "ETF代號": "00713",  "配置比例 %": 15},
-            {"資產名稱": "現金 / 貨幣市場",   "ETF代號": "現金",   "配置比例 %": 20},
+            {"資產名稱": "元大台灣高股息",    "代號": "0056",   "配置比例 %": 35},
+            {"資產名稱": "國泰永續高股息",    "代號": "00878",  "配置比例 %": 30},
+            {"資產名稱": "元大台灣高息低波",  "代號": "00713",  "配置比例 %": 15},
+            {"資產名稱": "現金 / 貨幣市場",   "代號": "現金",   "配置比例 %": 20},
         ],
         "均衡穩健型": [
-            {"資產名稱": "元大台灣50",        "ETF代號": "0050",   "配置比例 %": 15},
-            {"資產名稱": "國泰永續高股息",    "ETF代號": "00878",  "配置比例 %": 20},
-            {"資產名稱": "元大投資級公司債",  "ETF代號": "00720B", "配置比例 %": 30},
-            {"資產名稱": "元大美債20年",      "ETF代號": "00679B", "配置比例 %": 15},
-            {"資產名稱": "現金 / 貨幣市場",   "ETF代號": "現金",   "配置比例 %": 20},
+            {"資產名稱": "元大台灣50",        "代號": "0050",   "配置比例 %": 15},
+            {"資產名稱": "國泰永續高股息",    "代號": "00878",  "配置比例 %": 20},
+            {"資產名稱": "元大投資級公司債",  "代號": "00720B", "配置比例 %": 30},
+            {"資產名稱": "元大美債20年",      "代號": "00679B", "配置比例 %": 15},
+            {"資產名稱": "現金 / 貨幣市場",   "代號": "現金",   "配置比例 %": 20},
         ],
     }
 
@@ -544,7 +560,7 @@ with tab5:
         # 若 session 內沒有 base（第一次或清掉了），用預設組合
         if "_custom_base" not in st.session_state:
             st.session_state["_custom_base"] = [
-                {"ETF代號": row["ETF代號"], "配置比例 %": row["配置比例 %"]}
+                {"代號": row["代號"], "配置比例 %": row["配置比例 %"]}
                 for row in _PRESETS["保守配息型（預設）"]
             ]
 
@@ -554,8 +570,8 @@ with tab5:
             width="stretch",
             key="retire_portfolio_custom",
             column_config={
-                "ETF代號":    st.column_config.TextColumn(
-                    help="台灣 ETF 代號，現金請填「現金」",
+                "代號":    st.column_config.TextColumn(
+                    help="台股代號（ETF 或個股），現金請填「現金」",
                     required=True,
                 ),
                 "配置比例 %": st.column_config.NumberColumn(
@@ -569,10 +585,10 @@ with tab5:
 
         # 自動帶入資產名稱（從 FinMind TaiwanStockInfo 查詢）
         with st.spinner("查詢股票名稱..."):
-            custom_editor["資產名稱"] = custom_editor["ETF代號"].apply(
+            custom_editor["資產名稱"] = custom_editor["代號"].apply(
                 lambda c: fetch_stock_name(str(c).strip().upper(), token) if str(c).strip() else ""
             )
-        portfolio_df = custom_editor[["資產名稱", "ETF代號", "配置比例 %"]]
+        portfolio_df = custom_editor[["資產名稱", "代號", "配置比例 %"]]
     else:
         _init_data = _PRESETS[preset_choice]
         portfolio_df = st.data_editor(
@@ -582,7 +598,7 @@ with tab5:
             key=f"retire_portfolio_{preset_choice}",
             column_config={
                 "資產名稱":   st.column_config.TextColumn(disabled=True),
-                "ETF代號":    st.column_config.TextColumn(disabled=True),
+                "代號":    st.column_config.TextColumn(disabled=True),
                 "配置比例 %": st.column_config.NumberColumn(
                     min_value=0, max_value=100, step=5, format="%.0f",
                 ),
@@ -601,27 +617,27 @@ with tab5:
     stat_rows = []
     fetch_errors = []
     _codes = [
-        str(r["ETF代號"]).strip().upper()
+        str(r["代號"]).strip().upper()
         for _, r in portfolio_df.iterrows()
-        if str(r["ETF代號"]).strip().upper() != "現金"
+        if str(r["代號"]).strip().upper() != "現金"
     ]
     _spinner_msg = f"載入 {', '.join(_codes)} 歷史資料..." if _codes else "計算中..."
 
     with st.spinner(_spinner_msg):
         for _, row in portfolio_df.iterrows():
-            code = str(row["ETF代號"]).strip().upper()
+            code = str(row["代號"]).strip().upper()
             if code == "現金":
                 etf_stats[code] = (_CASH_RETURN, _CASH_VOL, "固定假設", 999)
                 stat_rows.append({
                     "資產名稱":     row["資產名稱"],
-                    "ETF代號":      "現金",
+                    "代號":      "現金",
                     "資料期間":     "固定假設",
                     "歷史CAGR %":   f"{_CASH_RETURN*100:.2f}",
                     "年化波動度 %": f"{_CASH_VOL*100:.2f}",
                 })
             else:
                 try:
-                    close_r, _ = fetch_adjusted_close(code, token)
+                    close_r, _ = _cached_adjusted_close(code, token)
                     cagr, vol  = calc_return_vol(close_r)
                     period     = f"{close_r.index[0].date()} ～ {close_r.index[-1].date()}"
                     yrs        = (close_r.index[-1] - close_r.index[0]).days / 365.25
@@ -629,7 +645,7 @@ with tab5:
                     etf_stats[code] = (cagr, vol, period, yrs)
                     stat_rows.append({
                         "資產名稱":     row["資產名稱"],
-                        "ETF代號":      code,
+                        "代號":      code,
                         "資料期間":     period + warn,
                         "歷史CAGR %":   f"{cagr*100:.2f}",
                         "年化波動度 %": f"{vol*100:.2f}",
@@ -647,16 +663,16 @@ with tab5:
 
     # 短歷史警告
     short_hist_etfs = [
-        (str(row["ETF代號"]).strip().upper(), row["資產名稱"])
+        (str(row["代號"]).strip().upper(), row["資產名稱"])
         for _, row in portfolio_df.iterrows()
-        if str(row["ETF代號"]).strip().upper() != "現金"
-        and etf_stats.get(str(row["ETF代號"]).strip().upper(), (0, 0, "", 999))[3] < 10
+        if str(row["代號"]).strip().upper() != "現金"
+        and etf_stats.get(str(row["代號"]).strip().upper(), (0, 0, "", 999))[3] < 10
     ]
     if short_hist_etfs:
         names = "、".join(f"{code}（{name}）" for code, name in short_hist_etfs)
         st.warning(
             f"⚠️ **回測期間不足警告**\n\n"
-            f"以下 ETF 歷史資料不足 10 年：**{names}**。\n\n"
+            f"以下標的歷史資料不足 10 年：**{names}**。\n\n"
             "其 CAGR 可能因取樣期間恰好涵蓋多頭行情而**嚴重高估長期報酬**，"
             "以此數字進行退休模擬時請保守解讀結果，建議實際規劃時適度下調預期報酬假設。"
         )
@@ -665,13 +681,13 @@ with tab5:
     w_ret = 0.0
     w_vol = 0.0
     for _, row in portfolio_df.iterrows():
-        code   = str(row["ETF代號"]).strip().upper()
+        code   = str(row["代號"]).strip().upper()
         weight = row["配置比例 %"] / 100
         cagr, vol, _, _yrs = etf_stats.get(code, (_CASH_RETURN, _CASH_VOL, "", 999))
         w_ret += weight * cagr
         w_vol += weight * vol
 
-    short_note = "　⚠️ 含短歷史 ETF，報酬偏高屬正常，請保守解讀" if short_hist_etfs else ""
+    short_note = "　⚠️ 含短歷史標的，報酬偏高屬正常，請保守解讀" if short_hist_etfs else ""
     st.success(
         f"✅ 加權歷史年化報酬：**{w_ret*100:.2f}%**　｜　加權年化波動度：**{w_vol*100:.2f}%**"
         f"　（波動度為各資產加權平均，未考慮資產間相關係數）{short_note}"
@@ -867,7 +883,7 @@ _custom_df = st.session_state.get("_custom_df_value")  # data_editor return valu
 if _custom_df is not None and hasattr(_custom_df, "columns"):
     try:
         _ls_all["r_custom"] = _json.loads(
-            _custom_df[["ETF代號", "配置比例 %"]].to_json(orient="records", force_ascii=False)
+            _custom_df[["代號", "配置比例 %"]].to_json(orient="records", force_ascii=False)
         )
     except Exception:
         pass
