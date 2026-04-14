@@ -331,7 +331,11 @@ with tab3:
     st.subheader("💰 股利發放歷史")
 
     with st.spinner("載入股利資料..."):
-        div_df = _cached_dividend_history(stock_id, token)
+        try:
+            div_df = _cached_dividend_history(stock_id, token)
+        except Exception as e:
+            st.error(f"載入股利資料失敗：{e}")
+            st.stop()
 
     if div_df.empty:
         st.info(f"{stock_id} 無股利發放記錄（可能為非配息型股票/ETF）")
@@ -413,7 +417,11 @@ with tab4:
                 st.warning(err)
 
         if len(closes) >= 2:
-            records      = calc_multi_compare(closes, monthly_dca)
+            try:
+                records = calc_multi_compare(closes, monthly_dca)
+            except Exception as e:
+                st.error(f"比較計算失敗：{e}")
+                st.stop()
             common_start = records[0].common_start.date()
             last_date    = max(r.normalized.index[-1] for r in records)
 
@@ -454,7 +462,7 @@ with tab4:
                 width="stretch", hide_index=True
             )
 
-            cmp_csv = cmp_df.drop(columns=["原始成立日"]).to_csv(index=False).encode("utf-8-sig")
+            cmp_csv = cmp_df.drop(columns=["原始上市日"]).to_csv(index=False).encode("utf-8-sig")
             st.download_button(
                 label    = "⬇️ 下載比較結果 CSV",
                 data     = cmp_csv,
@@ -698,27 +706,35 @@ with tab5:
     # ── Monte Carlo 模擬 ──────────────────────────────────────────────────────
     retire_asset = retire_asset_wan * 10_000
 
-    with st.spinner("執行 1,000 次 Monte Carlo 模擬中..."):
-        mc = simulate_gk_montecarlo(
+    try:
+        with st.spinner("執行 1,000 次 Monte Carlo 模擬中..."):
+            mc = simulate_gk_montecarlo(
+                initial_portfolio = retire_asset,
+                initial_rate      = init_rate_pct / 100,
+                guardrail_pct     = guardrail_pct / 100,
+                annual_return     = w_ret,
+                annual_volatility = w_vol,
+                inflation_rate    = inflation_pct / 100,
+                years             = int(retire_years),
+                n_sims            = 1000,
+            )
+    except Exception as e:
+        st.error(f"Monte Carlo 模擬失敗：{e}")
+        st.stop()
+
+    # 同時跑確定性中位情境（用於逐年明細）
+    try:
+        det_result = simulate_gk(
             initial_portfolio = retire_asset,
             initial_rate      = init_rate_pct / 100,
             guardrail_pct     = guardrail_pct / 100,
             annual_return     = w_ret,
-            annual_volatility = w_vol,
             inflation_rate    = inflation_pct / 100,
             years             = int(retire_years),
-            n_sims            = 1000,
         )
-
-    # 同時跑確定性中位情境（用於逐年明細）
-    det_result = simulate_gk(
-        initial_portfolio = retire_asset,
-        initial_rate      = init_rate_pct / 100,
-        guardrail_pct     = guardrail_pct / 100,
-        annual_return     = w_ret,
-        inflation_rate    = inflation_pct / 100,
-        years             = int(retire_years),
-    )
+    except Exception as e:
+        st.error(f"確定性模擬失敗：{e}")
+        st.stop()
 
     # ── 摘要指標 ──────────────────────────────────────────────────────────────
     st.markdown("#### 📋 模擬結果摘要（1,000 次模擬）")
