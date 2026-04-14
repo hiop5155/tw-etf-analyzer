@@ -12,6 +12,18 @@ import numpy as np
 import pandas as pd
 
 
+def _atomic_csv(df: "pd.DataFrame | pd.Series", path: Path, **kwargs) -> None:
+    """Write *df* to *path* atomically: write to a .tmp sibling first,
+    then os.replace() so readers never see a partial file."""
+    tmp = path.with_suffix(".tmp")
+    try:
+        df.to_csv(tmp, **kwargs)
+        os.replace(tmp, path)
+    except Exception:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
 def _safe_cagr(end_val: float, start_val: float, years: float) -> float:
     """Return CAGR % safely; returns 0.0 on any zero/negative input."""
     if start_val <= 0 or years <= 0 or end_val < 0:
@@ -130,11 +142,11 @@ def fetch_adjusted_close(stock_id: str, token: str, force: bool = False) -> tupl
     else:
         logs.append("無分割/除權息記錄")
 
-    close.to_csv(path)
+    _atomic_csv(close, path)
     # 同時快取股利資料
     if dividends:
         div_df = pd.DataFrame(dividends)[["date", "stock_id", "before_price", "after_price", "stock_and_cache_dividend"]]
-        div_df.to_csv(_div_cache_path(stock_id), index=False)
+        _atomic_csv(div_df, _div_cache_path(stock_id), index=False)
 
     logs.append(f"已儲存快取：{path.name}")
     return close, logs
@@ -183,7 +195,7 @@ def fetch_dividend_history(stock_id: str, token: str) -> pd.DataFrame:
             return pd.DataFrame()
         df = pd.DataFrame(records)[["date", "stock_id", "before_price", "after_price", "stock_and_cache_dividend"]]
         df["date"] = pd.to_datetime(df["date"])
-        df.to_csv(path, index=False)
+        _atomic_csv(df, path, index=False)
 
     if df.empty:
         return df
