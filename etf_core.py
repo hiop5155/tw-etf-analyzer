@@ -207,24 +207,44 @@ def fetch_dividend_history(stock_id: str, token: str) -> pd.DataFrame:
 
 
 # ── 目標終值試算 ──────────────────────────────────────────────────────────────
-def calc_target_monthly(target: float, years: int, annual_cagr_pct: float) -> dict:
+def calc_target_monthly(
+    target: float,
+    years: int,
+    annual_cagr_pct: float,
+    existing: float = 0.0,   # 目前已持有市值（TWD）
+) -> dict:
     """
     反推：要在 N 年後達到目標金額，每月需投入多少？
-    同時計算一次性投入需要多少本金。
+    existing：目前已持有的市值，會以相同報酬率複利成長，從目標中扣除。
     """
     r_a = annual_cagr_pct / 100
     r_m = (1 + r_a) ** (1 / 12) - 1
     n   = years * 12
 
-    monthly  = target * r_m / ((1 + r_m) ** n - 1) if r_m > 0 else target / n
-    lump_sum = target / (1 + r_a) ** years
+    # 現有持倉 N 年後的終值
+    existing_fv = existing * ((1 + r_a) ** years) if r_a > -1 else existing
+
+    # 需要靠定投補足的缺口
+    remaining = max(target - existing_fv, 0.0)
+
+    if remaining == 0:
+        monthly = 0.0
+    elif r_m > 0:
+        monthly = remaining * r_m / ((1 + r_m) ** n - 1)
+    else:
+        monthly = remaining / n if n > 0 else 0.0
+
     total_invested = monthly * n
+    # 今日還需額外一次性投入（目標現值 - 現有持倉）
+    lump_sum = max(target / (1 + r_a) ** years - existing, 0.0)
 
     return {
         "monthly"        : monthly,
         "lump_sum_today" : lump_sum,
         "total_invested" : total_invested,
-        "total_gain"     : target - total_invested,
+        "existing_fv"    : existing_fv,
+        "remaining"      : remaining,
+        "total_gain"     : target - existing - total_invested,
     }
 
 

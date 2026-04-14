@@ -66,6 +66,7 @@ _DEFAULTS: dict = {
     # Tab 2 目標試算
     "_w_target_wan":   500,
     "_w_target_years": 10,
+    "_w_existing":     0,
     # Tab 4 多檔比較
     "_w_cmp_0": "", "_w_cmp_1": "", "_w_cmp_2": "",
     "_w_cmp_3": "", "_w_cmp_4": "",
@@ -94,6 +95,7 @@ if not st.session_state.get("_ls_applied"):
                 "preset_choice":   (str,   "r_preset"),
                 "_w_target_wan":   (int,   "target_wan"),
                 "_w_target_years": (int,   "target_years"),
+                "_w_existing":     (int,   "existing"),
                 "_w_cmp_0":        (str,   "cmp_0"),
                 "_w_cmp_1":        (str,   "cmp_1"),
                 "_w_cmp_2":        (str,   "cmp_2"),
@@ -107,7 +109,11 @@ if not st.session_state.get("_ls_applied"):
                     except (ValueError, TypeError):
                         pass
             if "r_custom" in _saved and isinstance(_saved["r_custom"], list):
-                st.session_state["_custom_base"] = _saved["r_custom"]
+                # 相容舊 localStorage：欄位曾叫 "ETF代號"，已改名為 "代號"
+                st.session_state["_custom_base"] = [
+                    {("代號" if k == "ETF代號" else k): v for k, v in row.items()}
+                    for row in _saved["r_custom"]
+                ]
                 st.session_state.pop("retire_portfolio_custom", None)
                 st.session_state["_custom_ls_done"] = True
         except Exception:
@@ -292,19 +298,30 @@ with tab2:
     st.subheader("🎯 目標終值試算")
     st.caption(f"以 {stock_id} 歷史年化報酬 **{lump_full.cagr_pct:.2f}%** 為基準試算")
 
-    tc1, tc2 = st.columns(2)
-    target_wan   = tc1.number_input("目標金額（萬 TWD）", min_value=1, step=100, key="_w_target_wan")
-    target_years = tc2.number_input("投資年限（年）", min_value=1, max_value=50, step=1, key="_w_target_years")
+    tc1, tc2, tc3 = st.columns(3)
+    target_wan    = tc1.number_input("目標金額（萬 TWD）",         min_value=1,   step=100, key="_w_target_wan")
+    target_years  = tc2.number_input("投資年限（年）",              min_value=1,   max_value=50, step=1, key="_w_target_years")
+    existing_wan  = tc3.number_input("目前已持有此標的（萬 TWD）", min_value=0,   step=10,  key="_w_existing")
 
-    target_twd = target_wan * 10_000
-    base = calc_target_monthly(target_twd, target_years, lump_full.cagr_pct)
+    target_twd   = target_wan   * 10_000
+    existing_twd = existing_wan * 10_000
+    base = calc_target_monthly(target_twd, target_years, lump_full.cagr_pct, existing=existing_twd)
 
-    rc1, rc2, rc3 = st.columns(3)
-    rc1.metric("每月需投入",     f"{base['monthly']:,.0f} TWD")
-    rc2.metric("一次性投入等效", f"{base['lump_sum_today']:,.0f} TWD")
-    rc3.metric("總投入本金",     f"{base['total_invested']:,.0f} TWD")
+    rc1, rc2, rc3, rc4 = st.columns(4)
+    rc1.metric("每月需投入",       f"{base['monthly']:,.0f} TWD")
+    rc2.metric("一次性投入等效",   f"{base['lump_sum_today']:,.0f} TWD")
+    rc3.metric("現有持倉屆時終值", f"{base['existing_fv']:,.0f} TWD")
+    rc4.metric("新增投入本金",     f"{base['total_invested']:,.0f} TWD")
 
-    st.caption(f"預計獲利：{base['total_gain']:,.0f} TWD（本金的 {base['total_gain']/base['total_invested']*100:.1f}%）")
+    if base['monthly'] == 0:
+        st.success(f"🎉 現有持倉預計 {target_years} 年後即可達標，不需額外定投！")
+    else:
+        total_new = existing_twd + base['total_invested']
+        st.caption(
+            f"新增投入本金：{base['total_invested']:,.0f}　＋　現有持倉：{existing_twd:,.0f}"
+            f"　＝　總投入成本：{total_new:,.0f} TWD　｜　"
+            f"預計獲利：{base['total_gain']:,.0f} TWD"
+        )
 
     st.divider()
     st.subheader("敏感度分析（不同報酬情境）")
@@ -312,13 +329,14 @@ with tab2:
     scenario_rows = []
     for mult in scenarios:
         rate = lump_full.cagr_pct * mult
-        res  = calc_target_monthly(target_twd, target_years, rate)
+        res  = calc_target_monthly(target_twd, target_years, rate, existing=existing_twd)
         scenario_rows.append({
-            "情境"          : f"{mult*100:.0f}% 歷史報酬",
-            "假設年化報酬%" : f"{rate:.2f}",
-            "每月投入 (TWD)": f"{res['monthly']:,.0f}",
-            "總投入 (TWD)"  : f"{res['total_invested']:,.0f}",
-            "總獲利 (TWD)"  : f"{res['total_gain']:,.0f}",
+            "情境"            : f"{mult*100:.0f}% 歷史報酬",
+            "假設年化報酬%"   : f"{rate:.2f}",
+            "持倉屆時終值"    : f"{res['existing_fv']:,.0f}",
+            "每月投入 (TWD)"  : f"{res['monthly']:,.0f}",
+            "新增投入本金"    : f"{res['total_invested']:,.0f}",
+            "預計獲利 (TWD)"  : f"{res['total_gain']:,.0f}",
         })
     sens_df = pd.DataFrame(scenario_rows)
     st.dataframe(sens_df, width="stretch", hide_index=True)
@@ -572,8 +590,13 @@ with tab5:
                 for row in _PRESETS["保守配息型（預設）"]
             ]
 
+        # normalize 欄名（相容舊 localStorage 中 "ETF代號" → "代號"）
+        _base_rows = [
+            {("代號" if k == "ETF代號" else k): v for k, v in row.items()}
+            for row in st.session_state["_custom_base"]
+        ]
         custom_editor = st.data_editor(
-            pd.DataFrame(st.session_state["_custom_base"]),
+            pd.DataFrame(_base_rows),
             num_rows="dynamic",
             width="stretch",
             key="retire_portfolio_custom",
@@ -887,8 +910,9 @@ _ls_all: dict = {
     "r_rate":       float(st.session_state.get("_w_rrate", 6.0)),
     "r_guard":      float(st.session_state.get("_w_rguard", 20.0)),
     "r_preset":     str(st.session_state.get("preset_choice", "保守配息型（預設）")),
-    "target_wan":   int(st.session_state.get("_w_target_wan", 1000)),
+    "target_wan":   int(st.session_state.get("_w_target_wan", 500)),
     "target_years": int(st.session_state.get("_w_target_years", 10)),
+    "existing":     int(st.session_state.get("_w_existing", 0)),
     "cmp_0":        str(st.session_state.get("_w_cmp_0", "")),
     "cmp_1":        str(st.session_state.get("_w_cmp_1", "")),
     "cmp_2":        str(st.session_state.get("_w_cmp_2", "")),
