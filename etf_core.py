@@ -528,6 +528,9 @@ def simulate_gk_montecarlo(
     """
     rng = np.random.default_rng(seed)
 
+    # 預先產生所有隨機報酬序列，方便事後取代表性路徑
+    ret_mat  = rng.normal(annual_return, annual_volatility, size=(n_sims, years))
+
     port_mat = np.zeros((n_sims, years))
     wd_mat   = np.zeros((n_sims, years))   # 月提領額
 
@@ -540,16 +543,14 @@ def simulate_gk_montecarlo(
 
         for yr in range(years):
             if portfolio <= 0:
-                break  # 後續年度維持 0
+                break
 
-            r               = float(rng.normal(annual_return, annual_volatility))
+            r               = float(ret_mat[sim, yr])
             portfolio_grown = portfolio * (1 + r)
 
-            # 通膨調整（上年資產未下滑才執行）
             if portfolio_grown >= prev_end:
                 withdrawal *= (1 + inflation_rate)
 
-            # 護欄
             cur_rate = withdrawal / portfolio_grown if portfolio_grown > 0 else float("inf")
             if cur_rate > upper:
                 withdrawal *= 0.90
@@ -561,7 +562,7 @@ def simulate_gk_montecarlo(
             portfolio     = max(0.0, portfolio_end)
 
             port_mat[sim, yr] = portfolio
-            wd_mat[sim, yr]   = withdrawal / 12   # 轉月
+            wd_mat[sim, yr]   = withdrawal / 12
 
     # 每年存活率（資產 > 0）
     survived  = port_mat > 0
@@ -573,6 +574,61 @@ def simulate_gk_montecarlo(
     port_pct = {p: np.percentile(port_mat, p, axis=0) for p in pcts}
     wd_pct   = {p: np.percentile(wd_mat,   p, axis=0) for p in pcts}
 
+    # 取代表性路徑：按最終資產排名，選 P10 / P50 / P90 的模擬路徑
+    # 再對該路徑的報酬序列跑一次完整 GK，記錄每年明細
+    sorted_idx = np.argsort(port_mat[:, -1])
+
+    def _gk_trace(return_seq: np.ndarray) -> list[dict]:
+        """對給定報酬序列跑 GK，回傳逐年明細 list。"""
+        records = []
+        portfolio  = initial_portfolio
+        withdrawal = initial_portfolio * initial_rate
+        prev_end   = initial_portfolio
+        upper      = initial_rate * (1 + guardrail_pct)
+        lower      = initial_rate * (1 - guardrail_pct)
+
+        for yr, r in enumerate(return_seq):
+            if portfolio <= 0:
+                records.append({
+                    "年度": yr + 1, "年化報酬 %": f"{r*100:+.1f}",
+                    "年末資產 (萬)": "0", "月提領額": "0",
+                    "提領率 %": "—", "護欄觸發": "💀 資產耗盡",
+                })
+                continue
+
+            portfolio_grown = portfolio * (1 + r)
+
+            if portfolio_grown >= prev_end:
+                withdrawal *= (1 + inflation_rate)
+
+            trigger = ""
+            cur_rate = withdrawal / portfolio_grown if portfolio_grown > 0 else float("inf")
+            if cur_rate > upper:
+                withdrawal *= 0.90
+                trigger = "↓ 減10%"
+            elif cur_rate < lower:
+                withdrawal *= 1.10
+                trigger = "↑ 加10%"
+
+            portfolio_end = portfolio_grown - withdrawal
+            prev_end      = portfolio_grown
+            portfolio     = max(0.0, portfolio_end)
+
+            records.append({
+                "年度":          yr + 1,
+                "年化報酬 %":    f"{r*100:+.1f}",
+                "年末資產 (萬)": f"{portfolio/10_000:,.0f}",
+                "月提領額":      f"{withdrawal/12:,.0f}",
+                "提領率 %":      f"{cur_rate*100:.2f}",
+                "護欄觸發":      trigger if trigger else "—",
+            })
+        return records
+
+    rep_paths: dict[int, list[dict]] = {}
+    for pct in (10, 50, 90):
+        idx = sorted_idx[int(n_sims * pct / 100)]
+        rep_paths[pct] = _gk_trace(ret_mat[idx])
+
     return {
         "years":            years_arr,
         "port_pct":         port_pct,
@@ -582,6 +638,7 @@ def simulate_gk_montecarlo(
         "depleted_pct":     100 - float(surv_rate[-1]),
         "n_sims":           n_sims,
         "initial_monthly":  initial_portfolio * initial_rate / 12,
+        "rep_paths":        rep_paths,   # {10: [...], 50: [...], 90: [...]}
     }
 
 

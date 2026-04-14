@@ -19,7 +19,7 @@ import plotly.graph_objects as go
 from etf_core import (
     load_token, fetch_adjusted_close, fetch_dividend_history,
     calc_comparison, calc_multi_compare, calc_target_monthly,
-    simulate_gk, simulate_gk_montecarlo, calc_return_vol,
+    simulate_gk_montecarlo, calc_return_vol,
     fetch_stock_name,
 )
 
@@ -730,7 +730,7 @@ with tab5:
     retire_asset = retire_asset_wan * 10_000
 
     try:
-        with st.spinner("執行 1,000 次 Monte Carlo 模擬中..."):
+        with st.spinner("執行 2,000 次 Monte Carlo 模擬中..."):
             mc = simulate_gk_montecarlo(
                 initial_portfolio = retire_asset,
                 initial_rate      = init_rate_pct / 100,
@@ -739,28 +739,14 @@ with tab5:
                 annual_volatility = w_vol,
                 inflation_rate    = inflation_pct / 100,
                 years             = int(retire_years),
-                n_sims            = 1000,
+                n_sims            = 2000,
             )
     except Exception as e:
         st.error(f"Monte Carlo 模擬失敗：{e}")
         st.stop()
 
-    # 同時跑確定性中位情境（用於逐年明細）
-    try:
-        det_result = simulate_gk(
-            initial_portfolio = retire_asset,
-            initial_rate      = init_rate_pct / 100,
-            guardrail_pct     = guardrail_pct / 100,
-            annual_return     = w_ret,
-            inflation_rate    = inflation_pct / 100,
-            years             = int(retire_years),
-        )
-    except Exception as e:
-        st.error(f"確定性模擬失敗：{e}")
-        st.stop()
-
     # ── 摘要指標 ──────────────────────────────────────────────────────────────
-    st.markdown("#### 📋 模擬結果摘要（1,000 次模擬）")
+    st.markdown("#### 📋 模擬結果摘要（2,000 次模擬）")
     sm1, sm2, sm3, sm4 = st.columns(4)
     sm1.metric("初始月提領額",   f"{mc['initial_monthly']:,.0f} TWD")
     sm2.metric(f"第{retire_years}年存活率", f"{mc['survival_final']:.1f}%")
@@ -851,17 +837,22 @@ with tab5:
     )
     st.plotly_chart(fig_surv, width="stretch")
 
-    # ── 逐年確定性中位情境明細 ────────────────────────────────────────────────
-    with st.expander("📄 確定性模擬明細（使用加權平均報酬，無隨機）", expanded=False):
-        det_df = pd.DataFrame([{
-            "年度":     r.year,
-            "年末資產": f"{r.portfolio_end:,.0f}",
-            "年提領額": f"{r.withdrawal:,.0f}",
-            "月提領額": f"{r.monthly_income:,.0f}",
-            "提領率%":  round(r.withdrawal_rate, 2),
-            "護欄觸發": {"": "—", "capital_preservation": "↓ 減10%", "prosperity": "↑ 加10%"}[r.trigger],
-        } for r in det_result.records])
-        st.dataframe(det_df, width="stretch", hide_index=True)
+    # ── 逐年 Monte Carlo 百分位明細 ────────────────────────────────────────────
+    with st.expander("📄 逐年 GK 提領明細（代表性路徑）", expanded=False):
+        st.caption(
+            "從 2,000 次模擬中，按最終資產排名取出 **P10（悲觀）、P50（中位）、P90（樂觀）** "
+            "三條代表性路徑，對各自的報酬序列重跑 GK 策略，呈現每年確定的提領與護欄觸發結果。"
+        )
+        for pct, label in [
+            (10, "😟 悲觀路徑 P10　（最終資產排第 10%，資產消耗較快）"),
+            (50, "😐 中位路徑 P50　（最終資產排第 50%，典型情境）"),
+            (90, "😊 樂觀路徑 P90　（最終資產排第 90%，投資環境較好）"),
+        ]:
+            with st.expander(label, expanded=(pct == 50)):
+                st.dataframe(
+                    pd.DataFrame(mc["rep_paths"][pct]),
+                    width="stretch", hide_index=True,
+                )
 
     # ── GK 策略說明 ────────────────────────────────────────────────────────────
     with st.expander("ℹ️ Guyton-Klinger 策略與 Monte Carlo 說明", expanded=False):
@@ -876,7 +867,7 @@ with tab5:
 
 **Monte Carlo 方法**
 - 每年報酬從 **正態分布 N(加權年化報酬, 加權波動度)** 中隨機抽樣
-- 執行 **1,000 次**獨立模擬，統計各年度資產與提領額的百分位數分布
+- 執行 **2,000 次**獨立模擬，統計各年度資產與提領額的百分位數分布
 - 波動度為各資產加權平均（簡化；不含資產間相關係數）
 - P50 = 中位數情境；P10 = 悲觀情境；P90 = 樂觀情境
         """)
