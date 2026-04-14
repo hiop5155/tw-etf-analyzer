@@ -11,7 +11,11 @@ for pkg in ["streamlit", "pandas", "plotly", "openpyxl"]:
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
-from etf_core import load_token, fetch_adjusted_close, calc_comparison
+from etf_core import (
+    load_token, fetch_adjusted_close, fetch_dividend_history,
+    calc_comparison, calc_multi_compare, calc_target_monthly,
+    simulate_gk, simulate_gk_montecarlo, calc_return_vol,
+)
 
 st.set_page_config(page_title="ETF 績效分析", page_icon="📈", layout="wide")
 st.title("📈 ETF 績效分析")
@@ -22,12 +26,12 @@ if not token:
     st.error("找不到 FINMIND_TOKEN，請在 .env 檔設定：`FINMIND_TOKEN=你的token`")
     st.stop()
 
-# ── 輸入區 ────────────────────────────────────────────────────────────────────
+# ── 全域輸入（所有 tab 共用） ─────────────────────────────────────────────────
 c1, c2, c3 = st.columns([2, 2, 1])
 stock_id    = c1.text_input("股票代號（不需要 .TW）", value="00631L").upper().removesuffix(".TW")
 monthly_dca = c2.number_input("每月定期定額（TWD）", min_value=1000, value=25000, step=1000)
 c3.write(""); c3.write("")
-refresh = c3.button("🔄 重新下載", width='stretch')
+refresh = c3.button("🔄 重新下載", width="stretch")
 
 st.divider()
 
@@ -35,111 +39,686 @@ if not stock_id:
     st.info("請輸入股票代號")
     st.stop()
 
-# ── 資料 ──────────────────────────────────────────────────────────────────────
+# ── 載入完整資料（所有 tab 共用） ────────────────────────────────────────────
 with st.spinner(f"載入 {stock_id} 資料..."):
     try:
-        close, _ = fetch_adjusted_close(stock_id, token, force=refresh)
+        close_full, _ = fetch_adjusted_close(stock_id, token, force=refresh)
     except Exception as e:
         st.error(str(e)); st.stop()
 
-result = calc_comparison(close, monthly_dca)
-lump   = result.lump
-dca    = result.dca
-f      = dca.final
-
-# ── 摘要卡片 ──────────────────────────────────────────────────────────────────
-st.subheader(f"{stock_id}　{lump.inception_date.date()} ～ {lump.last_date.date()}　（{lump.years:.1f} 年）")
-
-c1, c2, c3, c4 = st.columns(4)
-c1.metric("單筆總報酬",      f"{lump.total_return_pct:+,.1f}%")
-c2.metric("單筆年化報酬",    f"{lump.cagr_pct:+.2f}%")
-c3.metric("定期定額總報酬",  f"{f.return_pct:+.1f}%")
-c4.metric("定期定額年化報酬",f"{result.dca_cagr_pct:+.2f}%")
-
-# ── 定期定額逐年表 ────────────────────────────────────────────────────────────
-st.subheader(f"定期定額每月 {monthly_dca:,.0f} TWD — 逐年績效")
-df = pd.DataFrame([{
-    "年度"       : r.year,
-    "累計投入"   : r.cost_cum,
-    "期末市值"   : r.value,
-    "未實現損益" : r.gain,
-    "累計報酬率%": round(r.return_pct, 1),
-} for r in dca.years])
-
-st.dataframe(
-    df.style.format({
-        "累計投入"  : "{:,.0f}",
-        "期末市值"  : "{:,.0f}",
-        "未實現損益": "{:,.0f}",
-    }).map(
-        lambda v: "color: red" if isinstance(v, (int, float)) and v < 0 else "",
-        subset=["未實現損益", "累計報酬率%"]
-    ),
-    width='stretch', hide_index=True
-)
-
-# ── 折線圖 ────────────────────────────────────────────────────────────────────
-st.subheader("期末市值 vs 累計投入")
-fig = go.Figure()
-fig.add_trace(go.Scatter(x=df["年度"], y=df["期末市值"], name="期末市值", mode="lines+markers"))
-fig.add_trace(go.Scatter(x=df["年度"], y=df["累計投入"], name="累計投入", mode="lines+markers", line=dict(dash="dash")))
-fig.update_layout(xaxis_title="年度", yaxis_title="TWD", hovermode="x unified")
-st.plotly_chart(fig, width='stretch')
-
-# ── 單筆 vs 定期定額 對照 ─────────────────────────────────────────────────────
-st.subheader("單筆 vs 定期定額 對照（同等本金）")
-inception = lump.inception_date.strftime("%Y-%m-%d")
-cmp = pd.DataFrame([
-    {"項目": "開始投入日期",  "單筆投入": inception,                             "定期定額": inception},
-    {"項目": "總本金 (TWD)", "單筆投入": f"{f.cost_cum:,.0f}",                  "定期定額": f"{f.cost_cum:,.0f}"},
-    {"項目": "終值 (TWD)",   "單筆投入": f"{result.lump_same_cost_final:,.0f}",  "定期定額": f"{f.value:,.0f}"},
-    {"項目": "總報酬",       "單筆投入": f"{result.lump_same_cost_ret:.1f}%",    "定期定額": f"{f.return_pct:.2f}%"},
-    {"項目": "年化報酬",     "單筆投入": f"{result.lump_same_cost_cagr:.2f}%",   "定期定額": f"{result.dca_cagr_pct:.2f}%"},
+# ── 分頁 ──────────────────────────────────────────────────────────────────────
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    "📊 績效分析", "🎯 目標試算", "💰 股利歷史", "📈 多 ETF 比較", "🏖️ 退休提領模擬"
 ])
-st.dataframe(cmp, width='stretch', hide_index=True)
 
-# ── 下載 ──────────────────────────────────────────────────────────────────────
-st.divider()
-st.subheader("下載結果")
 
-def build_excel(stock_id, monthly_dca, lump, result, df, cmp) -> bytes:
-    buf = io.BytesIO()
-    with pd.ExcelWriter(buf, engine="openpyxl") as writer:
-        # 摘要
-        summary = pd.DataFrame([
-            {"項目": "股票代號",       "數值": stock_id},
-            {"項目": "資料起始日",     "數值": str(lump.inception_date.date())},
-            {"項目": "最新資料日",     "數值": str(lump.last_date.date())},
-            {"項目": "持有年數",       "數值": round(lump.years, 2)},
-            {"項目": "每月定期定額",   "數值": monthly_dca},
-            {"項目": "單筆總報酬%",    "數值": round(lump.total_return_pct, 2)},
-            {"項目": "單筆年化報酬%",  "數值": round(lump.cagr_pct, 2)},
-            {"項目": "定期定額總報酬%","數值": round(result.dca.final.return_pct, 2)},
-            {"項目": "定期定額年化%",  "數值": round(result.dca_cagr_pct, 2)},
-        ])
-        summary.to_excel(writer, sheet_name="摘要", index=False)
-        df.to_excel(writer, sheet_name="逐年績效", index=False)
-        cmp.to_excel(writer, sheet_name="單筆vs定期定額", index=False)
-    return buf.getvalue()
+# ════════════════════════════════════════════════════════════════════════════
+# Tab 1：績效分析
+# ════════════════════════════════════════════════════════════════════════════
+with tab1:
+    min_date = close_full.index[0].date()
+    max_date = close_full.index[-1].date()
 
-excel_bytes = build_excel(stock_id, monthly_dca, lump, result, df, cmp)
-filename    = f"{stock_id}_ETF分析_{lump.last_date.strftime('%Y%m%d')}.xlsx"
+    with st.expander("⚙️ 自訂分析起始日（預設：ETF 成立日）", expanded=False):
+        custom_start = st.date_input(
+            "分析起始日",
+            value=min_date,
+            min_value=min_date,
+            max_value=max_date,
+            key="custom_start_date",
+        )
+        if custom_start > min_date:
+            st.caption(f"ETF 成立日為 {min_date}，目前從 {custom_start} 開始分析")
 
-c1, c2 = st.columns(2)
+    close = close_full[close_full.index >= pd.Timestamp(custom_start)]
+    if len(close) < 2:
+        st.error("所選起始日後資料不足，請選擇更早的日期")
+        st.stop()
 
-c1.download_button(
-    label    = "⬇️ 下載 Excel（含三個工作表）",
-    data     = excel_bytes,
-    file_name= filename,
-    mime     = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    width    = "stretch",
-)
+    result = calc_comparison(close, monthly_dca)
+    lump   = result.lump
+    dca    = result.dca
+    f      = dca.final
 
-csv_bytes = df.to_csv(index=False).encode("utf-8-sig")  # utf-8-sig 讓 Excel 開中文不亂碼
-c2.download_button(
-    label    = "⬇️ 下載 CSV（逐年績效）",
-    data     = csv_bytes,
-    file_name= f"{stock_id}_逐年績效_{lump.last_date.strftime('%Y%m%d')}.csv",
-    mime     = "text/csv",
-    width    = "stretch",
-)
+    # 摘要卡片
+    st.subheader(f"{stock_id}　{lump.inception_date.date()} ～ {lump.last_date.date()}　（{lump.years:.1f} 年）")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("單筆總報酬",       f"{lump.total_return_pct:+,.1f}%")
+    c2.metric("單筆年化報酬",     f"{lump.cagr_pct:+.2f}%")
+    c3.metric("定期定額總報酬",   f"{f.return_pct:+.1f}%")
+    c4.metric("定期定額年化報酬", f"{result.dca_cagr_pct:+.2f}%")
+
+    # 逐年績效表
+    st.subheader(f"定期定額每月 {monthly_dca:,.0f} TWD — 逐年績效")
+    df = pd.DataFrame([{
+        "年度"       : r.year,
+        "累計投入"   : f"{r.cost_cum:,.0f}",
+        "期末市值"   : f"{r.value:,.0f}",
+        "未實現損益" : r.gain,
+        "累計報酬率%": f"{r.return_pct:.1f}",
+    } for r in dca.years])
+
+    def _red_if_neg(v):
+        if isinstance(v, (int, float)):
+            return "color: red" if v < 0 else ""
+        if isinstance(v, str):
+            return "color: red" if v.lstrip().startswith("-") else ""
+        return ""
+
+    st.dataframe(
+        df.style.map(
+            _red_if_neg,
+            subset=["未實現損益", "累計報酬率%"]
+        ).format({"未實現損益": "{:,.0f}"}),
+        width="stretch", hide_index=True
+    )
+
+    # 折線圖
+    st.subheader("期末市值 vs 累計投入")
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=df["年度"], y=df["期末市值"], name="期末市值", mode="lines+markers"))
+    fig.add_trace(go.Scatter(x=df["年度"], y=df["累計投入"], name="累計投入", mode="lines+markers", line=dict(dash="dash")))
+    fig.update_layout(xaxis_title="年度", yaxis_title="TWD", hovermode="x unified")
+    st.plotly_chart(fig, width="stretch")
+
+    # 單筆 vs 定期定額
+    st.subheader("單筆 vs 定期定額 對照（同等本金）")
+    inception = lump.inception_date.strftime("%Y-%m-%d")
+    cmp = pd.DataFrame([
+        {"項目": "開始投入日期",  "單筆投入": inception,                             "定期定額": inception},
+        {"項目": "總本金 (TWD)", "單筆投入": f"{f.cost_cum:,.0f}",                  "定期定額": f"{f.cost_cum:,.0f}"},
+        {"項目": "終值 (TWD)",   "單筆投入": f"{result.lump_same_cost_final:,.0f}",  "定期定額": f"{f.value:,.0f}"},
+        {"項目": "總報酬",       "單筆投入": f"{result.lump_same_cost_ret:.1f}%",    "定期定額": f"{f.return_pct:.2f}%"},
+        {"項目": "年化報酬",     "單筆投入": f"{result.lump_same_cost_cagr:.2f}%",   "定期定額": f"{result.dca_cagr_pct:.2f}%"},
+    ])
+    st.dataframe(cmp, width="stretch", hide_index=True)
+
+    # 下載
+    st.divider()
+    st.subheader("下載結果")
+
+    def build_excel(stock_id, monthly_dca, lump, result, df, cmp) -> bytes:
+        buf = io.BytesIO()
+        with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+            summary = pd.DataFrame([
+                {"項目": "股票代號",        "數值": stock_id},
+                {"項目": "資料起始日",      "數值": str(lump.inception_date.date())},
+                {"項目": "最新資料日",      "數值": str(lump.last_date.date())},
+                {"項目": "持有年數",        "數值": round(lump.years, 2)},
+                {"項目": "每月定期定額",    "數值": monthly_dca},
+                {"項目": "單筆總報酬%",     "數值": round(lump.total_return_pct, 2)},
+                {"項目": "單筆年化報酬%",   "數值": round(lump.cagr_pct, 2)},
+                {"項目": "定期定額總報酬%", "數值": round(result.dca.final.return_pct, 2)},
+                {"項目": "定期定額年化%",   "數值": round(result.dca_cagr_pct, 2)},
+            ])
+            summary.to_excel(writer, sheet_name="摘要", index=False)
+            df.to_excel(writer, sheet_name="逐年績效", index=False)
+            cmp.to_excel(writer, sheet_name="單筆vs定期定額", index=False)
+        return buf.getvalue()
+
+    excel_bytes = build_excel(stock_id, monthly_dca, lump, result, df, cmp)
+    filename    = f"{stock_id}_ETF分析_{lump.last_date.strftime('%Y%m%d')}.xlsx"
+
+    dl1, dl2 = st.columns(2)
+    dl1.download_button(
+        label    = "⬇️ 下載 Excel（含三個工作表）",
+        data     = excel_bytes,
+        file_name= filename,
+        mime     = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        width    = "stretch",
+    )
+    csv_bytes = df.to_csv(index=False).encode("utf-8-sig")
+    dl2.download_button(
+        label    = "⬇️ 下載 CSV（逐年績效）",
+        data     = csv_bytes,
+        file_name= f"{stock_id}_逐年績效_{lump.last_date.strftime('%Y%m%d')}.csv",
+        mime     = "text/csv",
+        width    = "stretch",
+    )
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Tab 2：目標試算
+# ════════════════════════════════════════════════════════════════════════════
+with tab2:
+    # 需要 lump.cagr_pct，先用全期計算
+    from etf_core import calc_lump_sum
+    lump_full = calc_lump_sum(close_full)
+
+    st.subheader("🎯 目標終值試算")
+    st.caption(f"以 {stock_id} 歷史年化報酬 **{lump_full.cagr_pct:.2f}%** 為基準試算")
+
+    tc1, tc2 = st.columns(2)
+    target_wan  = tc1.number_input("目標金額（萬 TWD）", min_value=1, value=1000, step=100)
+    target_years = tc2.number_input("投資年限（年）", min_value=1, max_value=50, value=10, step=1)
+
+    target_twd = target_wan * 10_000
+    base = calc_target_monthly(target_twd, target_years, lump_full.cagr_pct)
+
+    rc1, rc2, rc3 = st.columns(3)
+    rc1.metric("每月需投入",     f"{base['monthly']:,.0f} TWD")
+    rc2.metric("一次性投入等效", f"{base['lump_sum_today']:,.0f} TWD")
+    rc3.metric("總投入本金",     f"{base['total_invested']:,.0f} TWD")
+
+    st.caption(f"預計獲利：{base['total_gain']:,.0f} TWD（本金的 {base['total_gain']/base['total_invested']*100:.1f}%）")
+
+    st.divider()
+    st.subheader("敏感度分析（不同報酬情境）")
+    scenarios = [0.5, 0.75, 1.0, 1.25, 1.5]
+    scenario_rows = []
+    for mult in scenarios:
+        rate = lump_full.cagr_pct * mult
+        res  = calc_target_monthly(target_twd, target_years, rate)
+        scenario_rows.append({
+            "情境"          : f"{mult*100:.0f}% 歷史報酬",
+            "假設年化報酬%" : f"{rate:.2f}",
+            "每月投入 (TWD)": f"{res['monthly']:,.0f}",
+            "總投入 (TWD)"  : f"{res['total_invested']:,.0f}",
+            "總獲利 (TWD)"  : f"{res['total_gain']:,.0f}",
+        })
+    sens_df = pd.DataFrame(scenario_rows)
+    st.dataframe(
+        sens_df.style.map(
+            lambda v: "font-weight: bold; background-color: #e8f4ea"
+            if isinstance(v, str) and v == "100% 歷史報酬" else "",
+            subset=["情境"]
+        ),
+        width="stretch", hide_index=True
+    )
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Tab 3：股利歷史
+# ════════════════════════════════════════════════════════════════════════════
+with tab3:
+    st.subheader("💰 股利發放歷史")
+
+    with st.spinner("載入股利資料..."):
+        div_df = fetch_dividend_history(stock_id, token)
+
+    if div_df.empty:
+        st.info(f"{stock_id} 無股利發放記錄（可能為非配息型 ETF）")
+    else:
+        avg_yield = div_df["yield_pct"].mean()
+        total_div = div_df["cash_dividend"].sum()
+        dc1, dc2, dc3 = st.columns(3)
+        dc1.metric("發放次數",     f"{len(div_df)} 次")
+        dc2.metric("歷史平均殖利率", f"{avg_yield:.2f}%")
+        dc3.metric("累計配息",     f"{total_div:.2f} TWD/股")
+
+        # 年度彙總雙軸圖
+        annual = (
+            div_df.groupby("year")
+            .agg(total_cash=("cash_dividend", "sum"), avg_yield=("yield_pct", "mean"))
+            .reset_index()
+        )
+        fig_div = go.Figure()
+        fig_div.add_trace(go.Bar(
+            x=annual["year"], y=annual["total_cash"],
+            name="年度配息 (TWD/股)", marker_color="steelblue", yaxis="y",
+        ))
+        fig_div.add_trace(go.Scatter(
+            x=annual["year"], y=annual["avg_yield"],
+            name="平均殖利率 %", mode="lines+markers",
+            line=dict(color="orange"), yaxis="y2",
+        ))
+        fig_div.update_layout(
+            xaxis_title="年度",
+            yaxis=dict(title="配息金額 (TWD/股)"),
+            yaxis2=dict(title="殖利率 %", overlaying="y", side="right"),
+            hovermode="x unified",
+            legend=dict(orientation="h", y=1.1),
+        )
+        st.plotly_chart(fig_div, width="stretch")
+
+        with st.expander("查看完整股利明細", expanded=False):
+            show_df = div_df[["date", "cash_dividend", "before_price", "after_price", "yield_pct"]].copy()
+            show_df["date"] = pd.to_datetime(show_df["date"]).dt.strftime("%Y-%m-%d")
+            show_df.columns = ["除息日", "配息(TWD/股)", "除息前股價", "除息後股價", "殖利率%"]
+            st.dataframe(
+                show_df.style.format({
+                    "配息(TWD/股)" : "{:.4f}",
+                    "除息前股價"   : "{:.2f}",
+                    "除息後股價"   : "{:.2f}",
+                    "殖利率%"      : "{:.2f}",
+                }),
+                width="stretch", hide_index=True
+            )
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Tab 4：多 ETF 比較
+# ════════════════════════════════════════════════════════════════════════════
+with tab4:
+    st.subheader("📊 多 ETF 績效比較")
+    st.caption("選 2～5 檔 ETF，以成立最晚的日期為共同起點比較報酬")
+
+    cols = st.columns(5)
+    default_ids = [stock_id, "", "", "", ""]
+    inputs = [
+        cols[i].text_input(f"ETF {i+1}", value=default_ids[i], key=f"cmp_{i}",
+                           placeholder="例如 0050")
+        for i in range(5)
+    ]
+    ids = [v.strip().upper().removesuffix(".TW") for v in inputs if v.strip()]
+
+    if len(ids) < 2:
+        st.info("請至少輸入 2 個股票代號")
+    else:
+        with st.spinner("載入比較資料..."):
+            closes = {}
+            errors = []
+            for sid in ids:
+                try:
+                    c, _ = fetch_adjusted_close(sid, token)
+                    closes[sid] = c
+                except Exception as e:
+                    errors.append(f"{sid}：{e}")
+            for err in errors:
+                st.warning(err)
+
+        if len(closes) >= 2:
+            records      = calc_multi_compare(closes, monthly_dca)
+            common_start = records[0].common_start.date()
+            last_date    = max(r.normalized.index[-1] for r in records)
+
+            st.caption(f"共同起始日：{common_start}　最新資料：{last_date.date()}")
+
+            fig2 = go.Figure()
+            for r in records:
+                fig2.add_trace(go.Scatter(
+                    x=r.normalized.index, y=r.normalized.values,
+                    name=r.stock_id, mode="lines",
+                ))
+            fig2.add_hline(y=100, line_dash="dot", line_color="gray")
+            fig2.update_layout(
+                xaxis_title="日期", yaxis_title="指數（起始=100）",
+                hovermode="x unified", legend_title="ETF",
+            )
+            st.plotly_chart(fig2, width="stretch")
+
+            cmp_df = pd.DataFrame([{
+                "ETF"          : r.stock_id,
+                "原始成立日"   : str(r.inception_date.date()),
+                "共同起始日"   : str(r.common_start.date()),
+                "比較年數"     : f"{r.years:.2f}",
+                "總報酬%"      : f"{r.total_return_pct:.1f}",
+                "年化報酬%"    : round(r.cagr_pct, 2),
+                f"DCA終值(月投{monthly_dca:,.0f})": f"{r.dca_final:,.0f}",
+                "DCA年化%"     : f"{r.dca_cagr_pct:.2f}",
+            } for r in records])
+
+            st.dataframe(
+                cmp_df.style.map(
+                    lambda v: "color: green; font-weight: bold"
+                    if isinstance(v, float) and v == max(
+                        x for x in cmp_df["年化報酬%"] if isinstance(x, float)
+                    ) else "",
+                    subset=["年化報酬%"]
+                ).format({"年化報酬%": "{:.2f}"}),
+                width="stretch", hide_index=True
+            )
+
+            cmp_csv = cmp_df.drop(columns=["原始成立日"]).to_csv(index=False).encode("utf-8-sig")
+            st.download_button(
+                label    = "⬇️ 下載比較結果 CSV",
+                data     = cmp_csv,
+                file_name= f"ETF比較_{'_'.join(r.stock_id for r in records)}_{last_date.strftime('%Y%m%d')}.csv",
+                mime     = "text/csv",
+            )
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Tab 5：退休提領模擬（Guyton-Klinger + Monte Carlo）
+# ════════════════════════════════════════════════════════════════════════════
+with tab5:
+    import numpy as np
+
+    # 現金固定假設（無上市 ETF）
+    _CASH_RETURN = 0.015
+    _CASH_VOL    = 0.005
+
+    # 預設組合定義
+    _PRESETS = {
+        "保守配息型（預設）": [
+            {"資產名稱": "元大台灣高股息",    "ETF代號": "0056",   "配置比例 %": 30},
+            {"資產名稱": "國泰永續高股息",    "ETF代號": "00878",  "配置比例 %": 20},
+            {"資產名稱": "元大投資級公司債",  "ETF代號": "00720B", "配置比例 %": 30},
+            {"資產名稱": "元大美債20年",      "ETF代號": "00679B", "配置比例 %": 10},
+            {"資產名稱": "現金 / 貨幣市場",   "ETF代號": "現金",   "配置比例 %": 10},
+        ],
+        "債券優先型": [
+            {"資產名稱": "元大投資級公司債",  "ETF代號": "00720B", "配置比例 %": 40},
+            {"資產名稱": "元大美債20年",      "ETF代號": "00679B", "配置比例 %": 25},
+            {"資產名稱": "元大台灣高股息",    "ETF代號": "0056",   "配置比例 %": 25},
+            {"資產名稱": "現金 / 貨幣市場",   "ETF代號": "現金",   "配置比例 %": 10},
+        ],
+        "全高股息型": [
+            {"資產名稱": "元大台灣高股息",    "ETF代號": "0056",   "配置比例 %": 35},
+            {"資產名稱": "國泰永續高股息",    "ETF代號": "00878",  "配置比例 %": 30},
+            {"資產名稱": "元大台灣高息低波",  "ETF代號": "00713",  "配置比例 %": 15},
+            {"資產名稱": "現金 / 貨幣市場",   "ETF代號": "現金",   "配置比例 %": 20},
+        ],
+        "均衡穩健型": [
+            {"資產名稱": "元大台灣50",        "ETF代號": "0050",   "配置比例 %": 15},
+            {"資產名稱": "國泰永續高股息",    "ETF代號": "00878",  "配置比例 %": 20},
+            {"資產名稱": "元大投資級公司債",  "ETF代號": "00720B", "配置比例 %": 30},
+            {"資產名稱": "元大美債20年",      "ETF代號": "00679B", "配置比例 %": 15},
+            {"資產名稱": "現金 / 貨幣市場",   "ETF代號": "現金",   "配置比例 %": 20},
+        ],
+    }
+
+    st.subheader("🏖️ 退休提領模擬 — Guyton-Klinger × Monte Carlo")
+    st.caption(
+        "目標達成後轉換為保守組合，以 GK 動態提領策略提領。"
+        "報酬率與波動度**自動從 FinMind 歷史資料計算**，執行 1,000 次 Monte Carlo 模擬。"
+    )
+
+    # ── 基本參數 ──────────────────────────────────────────────────────────────
+    st.markdown("#### ⚙️ 基本參數")
+    pc1, pc2, pc3 = st.columns(3)
+    retire_asset_wan = pc1.number_input(
+        "退休起始資產（萬 TWD）", min_value=100, value=1000, step=100,
+        help="可直接填入「目標試算」頁的目標金額",
+    )
+    retire_years  = pc2.number_input("模擬年數", min_value=5, max_value=60, value=30, step=5)
+    inflation_pct = pc3.number_input("通膨率 %", min_value=0.0, max_value=10.0, value=2.0, step=0.5)
+
+    pg1, pg2, pg3 = st.columns(3)
+    init_rate_pct = pg1.number_input("初始提領率 %", min_value=1.0, max_value=15.0, value=6.0, step=0.5)
+    _init_monthly = retire_asset_wan * 10_000 * init_rate_pct / 100 / 12
+    pg2.number_input("初始月提領額（TWD）", value=_init_monthly, disabled=True, format="%.0f")
+    guardrail_pct = pg3.number_input("護欄寬度 %（上下各）", min_value=5.0, max_value=50.0, value=20.0, step=5.0)
+
+    st.caption(
+        f"護欄觸發：提領率 > **{init_rate_pct*(1+guardrail_pct/100):.2f}%** 減10%；"
+        f"< **{init_rate_pct*(1-guardrail_pct/100):.2f}%** 加10%"
+    )
+
+    # ── 退休後投資組合 ────────────────────────────────────────────────────────
+    st.markdown("#### 🗂️ 退休後投資組合")
+
+    preset_names = list(_PRESETS.keys()) + ["自訂"]
+    preset_choice = st.radio(
+        "選擇預設組合",
+        preset_names,
+        horizontal=True,
+        key="preset_choice",
+    )
+
+    with st.expander("📋 各預設組合說明", expanded=False):
+        st.markdown("""
+| 組合 | 特色 | 適合對象 |
+|------|------|---------|
+| **保守配息型** | 高股息50% + 投資級債40% + 現金10% | 希望穩定配息、接受適度波動 |
+| **債券優先型** | 債券65% + 高股息25% + 現金10% | 追求資本保全、降低股市風險 |
+| **全高股息型** | 高股息80% + 現金20% | 信任台灣配息ETF、接受較高波動 |
+| **均衡穩健型** | 股35% + 債45% + 現金20% | 需要均衡成長與防禦的退休者 |
+        """)
+
+    if preset_choice == "自訂":
+        _init_data = _PRESETS["保守配息型（預設）"]
+    else:
+        _init_data = _PRESETS[preset_choice]
+
+    portfolio_df = st.data_editor(
+        pd.DataFrame(_init_data),
+        num_rows="dynamic",
+        width="stretch",
+        key=f"retire_portfolio_{preset_choice}",
+        column_config={
+            "資產名稱":   st.column_config.TextColumn(),
+            "ETF代號":    st.column_config.TextColumn(help="台灣 ETF 代號，現金請填「現金」"),
+            "配置比例 %": st.column_config.NumberColumn(min_value=0, max_value=100, step=5, format="%.0f"),
+        },
+        disabled=["資產名稱", "ETF代號"] if preset_choice != "自訂" else [],
+    )
+
+    total_alloc = portfolio_df["配置比例 %"].sum()
+    if abs(total_alloc - 100) > 0.5:
+        st.warning(f"⚠️ 配置比例加總為 {total_alloc:.1f}%，請調整至 100%")
+        st.stop()
+
+    # ── 自動計算歷史報酬與波動度 ─────────────────────────────────────────────
+    st.markdown("#### 📡 歷史報酬自動計算（從 FinMind）")
+
+    etf_stats: dict[str, tuple[float, float, str]] = {}   # code → (cagr, vol, period)
+    stat_rows = []
+    fetch_errors = []
+
+    for _, row in portfolio_df.iterrows():
+        code = str(row["ETF代號"]).strip().upper()
+        if code == "現金":
+            etf_stats[code] = (_CASH_RETURN, _CASH_VOL, "固定假設", 999)
+            stat_rows.append({
+                "資產名稱": row["資產名稱"],
+                "ETF代號":  "現金",
+                "資料期間": "固定假設",
+                "歷史CAGR %": f"{_CASH_RETURN*100:.2f}",
+                "年化波動度 %": f"{_CASH_VOL*100:.2f}",
+            })
+        else:
+            try:
+                close_r, _ = fetch_adjusted_close(code, token)
+                cagr, vol  = calc_return_vol(close_r)
+                period     = f"{close_r.index[0].date()} ～ {close_r.index[-1].date()}"
+                yrs        = (close_r.index[-1] - close_r.index[0]).days / 365.25
+                warn       = " ⚠️ 歷史<10年" if yrs < 10 else ""
+                etf_stats[code] = (cagr, vol, period, yrs)
+                stat_rows.append({
+                    "資產名稱":    row["資產名稱"],
+                    "ETF代號":     code,
+                    "資料期間":    period + warn,
+                    "歷史CAGR %":  f"{cagr*100:.2f}",
+                    "年化波動度 %": f"{vol*100:.2f}",
+                })
+            except Exception as e:
+                fetch_errors.append(f"{code}：{e}")
+
+    for err in fetch_errors:
+        st.error(err)
+
+    if fetch_errors:
+        st.stop()
+
+    st.dataframe(pd.DataFrame(stat_rows), width="stretch", hide_index=True)
+
+    # 短歷史警告
+    short_hist_etfs = [
+        (str(row["ETF代號"]).strip().upper(), row["資產名稱"])
+        for _, row in portfolio_df.iterrows()
+        if str(row["ETF代號"]).strip().upper() != "現金"
+        and etf_stats.get(str(row["ETF代號"]).strip().upper(), (0, 0, "", 999))[3] < 10
+    ]
+    if short_hist_etfs:
+        names = "、".join(f"{code}（{name}）" for code, name in short_hist_etfs)
+        st.warning(
+            f"⚠️ **回測期間不足警告**\n\n"
+            f"以下 ETF 歷史資料不足 10 年：**{names}**。\n\n"
+            "其 CAGR 可能因取樣期間恰好涵蓋多頭行情而**嚴重高估長期報酬**，"
+            "以此數字進行退休模擬時請保守解讀結果，建議實際規劃時適度下調預期報酬假設。"
+        )
+
+    # 加權計算
+    w_ret = 0.0
+    w_vol = 0.0
+    for _, row in portfolio_df.iterrows():
+        code   = str(row["ETF代號"]).strip().upper()
+        weight = row["配置比例 %"] / 100
+        cagr, vol, _, _yrs = etf_stats.get(code, (_CASH_RETURN, _CASH_VOL, "", 999))
+        w_ret += weight * cagr
+        w_vol += weight * vol
+
+    short_note = "　⚠️ 含短歷史 ETF，報酬偏高屬正常，請保守解讀" if short_hist_etfs else ""
+    st.success(
+        f"✅ 加權歷史年化報酬：**{w_ret*100:.2f}%**　｜　加權年化波動度：**{w_vol*100:.2f}%**"
+        f"　（波動度為各資產加權平均，未考慮資產間相關係數）{short_note}"
+    )
+
+    st.divider()
+
+    # ── Monte Carlo 模擬 ──────────────────────────────────────────────────────
+    retire_asset = retire_asset_wan * 10_000
+
+    with st.spinner("執行 1,000 次 Monte Carlo 模擬中..."):
+        mc = simulate_gk_montecarlo(
+            initial_portfolio = retire_asset,
+            initial_rate      = init_rate_pct / 100,
+            guardrail_pct     = guardrail_pct / 100,
+            annual_return     = w_ret,
+            annual_volatility = w_vol,
+            inflation_rate    = inflation_pct / 100,
+            years             = int(retire_years),
+            n_sims            = 1000,
+        )
+
+    # 同時跑確定性中位情境（用於逐年明細）
+    det_result = simulate_gk(
+        initial_portfolio = retire_asset,
+        initial_rate      = init_rate_pct / 100,
+        guardrail_pct     = guardrail_pct / 100,
+        annual_return     = w_ret,
+        inflation_rate    = inflation_pct / 100,
+        years             = int(retire_years),
+    )
+
+    # ── 摘要指標 ──────────────────────────────────────────────────────────────
+    st.markdown("#### 📋 模擬結果摘要（1,000 次模擬）")
+    sm1, sm2, sm3, sm4 = st.columns(4)
+    sm1.metric("初始月提領額",   f"{mc['initial_monthly']:,.0f} TWD")
+    sm2.metric(f"第{retire_years}年存活率", f"{mc['survival_final']:.1f}%")
+    sm3.metric("資產耗盡機率",   f"{mc['depleted_pct']:.1f}%")
+    p50_final = mc["port_pct"][50][-1]
+    sm4.metric("P50 期末資產",   f"{p50_final/10_000:,.0f} 萬 TWD")
+
+    # ── 圖1：資產餘額百分位扇形圖 ─────────────────────────────────────────────
+    st.markdown("#### 📊 資產餘額分布（百分位數）")
+    yrs = mc["years"]
+
+    fig_port = go.Figure()
+    # 填色區間：P10–P90
+    fig_port.add_trace(go.Scatter(
+        x=list(yrs) + list(yrs[::-1]),
+        y=list(mc["port_pct"][90] / 10_000) + list(mc["port_pct"][10][::-1] / 10_000),
+        fill="toself", fillcolor="rgba(70,130,180,0.15)",
+        line=dict(color="rgba(0,0,0,0)"), name="P10–P90", showlegend=True,
+    ))
+    fig_port.add_trace(go.Scatter(
+        x=list(yrs) + list(yrs[::-1]),
+        y=list(mc["port_pct"][75] / 10_000) + list(mc["port_pct"][25][::-1] / 10_000),
+        fill="toself", fillcolor="rgba(70,130,180,0.30)",
+        line=dict(color="rgba(0,0,0,0)"), name="P25–P75", showlegend=True,
+    ))
+    for p, color, dash in [(50, "steelblue", "solid"), (10, "tomato", "dash"), (90, "seagreen", "dash")]:
+        fig_port.add_trace(go.Scatter(
+            x=yrs, y=mc["port_pct"][p] / 10_000,
+            name=f"P{p}", mode="lines",
+            line=dict(color=color, dash=dash, width=2 if p == 50 else 1.5),
+        ))
+    fig_port.add_hline(y=0, line_dash="dot", line_color="gray")
+    fig_port.update_layout(
+        xaxis_title="退休後第幾年",
+        yaxis_title="資產餘額（萬 TWD）",
+        hovermode="x unified",
+        legend=dict(orientation="h", y=1.08),
+    )
+    st.plotly_chart(fig_port, width="stretch")
+
+    # ── 圖2：月提領額百分位 ───────────────────────────────────────────────────
+    st.markdown("#### 💵 每月提領額分布（百分位數）")
+    fig_wd = go.Figure()
+    fig_wd.add_trace(go.Scatter(
+        x=list(yrs) + list(yrs[::-1]),
+        y=list(mc["wd_pct"][90]) + list(mc["wd_pct"][10][::-1]),
+        fill="toself", fillcolor="rgba(46,139,87,0.15)",
+        line=dict(color="rgba(0,0,0,0)"), name="P10–P90",
+    ))
+    fig_wd.add_trace(go.Scatter(
+        x=list(yrs) + list(yrs[::-1]),
+        y=list(mc["wd_pct"][75]) + list(mc["wd_pct"][25][::-1]),
+        fill="toself", fillcolor="rgba(46,139,87,0.30)",
+        line=dict(color="rgba(0,0,0,0)"), name="P25–P75",
+    ))
+    for p, color, dash in [(50, "seagreen", "solid"), (10, "tomato", "dash"), (90, "royalblue", "dash")]:
+        fig_wd.add_trace(go.Scatter(
+            x=yrs, y=mc["wd_pct"][p],
+            name=f"P{p}", mode="lines",
+            line=dict(color=color, dash=dash, width=2 if p == 50 else 1.5),
+        ))
+    fig_wd.update_layout(
+        xaxis_title="退休後第幾年",
+        yaxis_title="每月提領額（TWD）",
+        hovermode="x unified",
+        legend=dict(orientation="h", y=1.08),
+    )
+    st.plotly_chart(fig_wd, width="stretch")
+
+    # ── 圖3：逐年存活率 ───────────────────────────────────────────────────────
+    st.markdown("#### 📉 逐年存活率")
+    fig_surv = go.Figure()
+    fig_surv.add_trace(go.Scatter(
+        x=yrs, y=mc["survival_rate"],
+        mode="lines+markers", line=dict(color="steelblue", width=2),
+        fill="toself", fillcolor="rgba(70,130,180,0.15)",
+        name="存活率 %",
+    ))
+    fig_surv.add_hline(y=80, line_dash="dash", line_color="orange",
+                       annotation_text="80% 安全門檻")
+    fig_surv.add_hline(y=50, line_dash="dash", line_color="tomato",
+                       annotation_text="50%")
+    fig_surv.update_layout(
+        xaxis_title="退休後第幾年",
+        yaxis_title="資產存活率 %",
+        yaxis=dict(range=[0, 105]),
+        hovermode="x unified",
+    )
+    st.plotly_chart(fig_surv, width="stretch")
+
+    # ── 逐年確定性中位情境明細 ────────────────────────────────────────────────
+    with st.expander("📄 確定性模擬明細（使用加權平均報酬，無隨機）", expanded=False):
+        det_df = pd.DataFrame([{
+            "年度":     r.year,
+            "年末資產": f"{r.portfolio_end:,.0f}",
+            "年提領額": f"{r.withdrawal:,.0f}",
+            "月提領額": f"{r.monthly_income:,.0f}",
+            "提領率%":  round(r.withdrawal_rate, 2),
+            "護欄觸發": {"": "—", "capital_preservation": "↓ 減10%", "prosperity": "↑ 加10%"}[r.trigger],
+        } for r in det_result.records])
+        st.dataframe(det_df, width="stretch", hide_index=True)
+
+    # ── GK 策略說明 ────────────────────────────────────────────────────────────
+    with st.expander("ℹ️ Guyton-Klinger 策略與 Monte Carlo 說明", expanded=False):
+        st.markdown(f"""
+**Guyton-Klinger 動態提領規則**
+
+| 規則 | 觸發條件 | 動作 |
+|------|---------|------|
+| 通膨調整 | 每年自動 | 提領額 ×(1+通膨率)；若上年資產下滑則跳過 |
+| 資本保護 (↓) | 當年提領率 > {init_rate_pct*(1+guardrail_pct/100):.2f}% | 提領額減少 10% |
+| 繁榮規則 (↑) | 當年提領率 < {init_rate_pct*(1-guardrail_pct/100):.2f}% | 提領額增加 10% |
+
+**Monte Carlo 方法**
+- 每年報酬從 **正態分布 N(加權年化報酬, 加權波動度)** 中隨機抽樣
+- 執行 **1,000 次**獨立模擬，統計各年度資產與提領額的百分位數分布
+- 波動度為各資產加權平均（簡化；不含資產間相關係數）
+- P50 = 中位數情境；P10 = 悲觀情境；P90 = 樂觀情境
+        """)
+
+    # ── 下載 ──────────────────────────────────────────────────────────────────
+    mc_summary = pd.DataFrame({
+        "年度":          yrs,
+        "P10資產(萬)":   (mc["port_pct"][10] / 10_000).round(1),
+        "P25資產(萬)":   (mc["port_pct"][25] / 10_000).round(1),
+        "P50資產(萬)":   (mc["port_pct"][50] / 10_000).round(1),
+        "P75資產(萬)":   (mc["port_pct"][75] / 10_000).round(1),
+        "P90資產(萬)":   (mc["port_pct"][90] / 10_000).round(1),
+        "P50月提領":     mc["wd_pct"][50].round(0).astype(int),
+        "存活率%":       mc["survival_rate"].round(1),
+    })
+    retire_csv = mc_summary.to_csv(index=False).encode("utf-8-sig")
+    st.download_button(
+        label    = "⬇️ 下載 Monte Carlo 摘要 CSV",
+        data     = retire_csv,
+        file_name= f"退休提領MC_{retire_asset_wan}萬_{retire_years}年.csv",
+        mime     = "text/csv",
+    )
