@@ -850,10 +850,13 @@ with tab3:
             (90, "😊 樂觀路徑 P90　（最終資產排第 90%，投資環境較好）"),
         ]:
             with st.expander(label, expanded=(pct == 1)):
-                st.dataframe(
-                    pd.DataFrame(mc["rep_paths"][pct]),
-                    width="stretch", hide_index=True,
-                )
+                if pct not in mc["rep_paths"]:
+                    st.info("請重新整理頁面以載入此路徑（模擬快取過期）。")
+                else:
+                    st.dataframe(
+                        pd.DataFrame(mc["rep_paths"][pct]),
+                        width="stretch", hide_index=True,
+                    )
 
     # ── GK 策略說明 ────────────────────────────────────────────────────────────
     with st.expander("ℹ️ Guyton-Klinger 策略與 Monte Carlo 說明", expanded=False):
