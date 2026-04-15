@@ -30,6 +30,10 @@ def _safe_cagr(end_val: float, start_val: float, years: float) -> float:
         return 0.0
     return ((end_val / start_val) ** (1.0 / years) - 1) * 100
 
+# ── 現金假設 ──────────────────────────────────────────────────────────────────
+CASH_RETURN: float = 0.015   # 年化報酬（固定假設）
+CASH_VOL:    float = 0.005   # 年化波動度
+
 # ── 路徑 ──────────────────────────────────────────────────────────────────────
 _HERE      = Path(__file__).parent
 CACHE_DIR  = _HERE / "stock_cache"
@@ -639,6 +643,159 @@ def simulate_gk_montecarlo(
         "n_sims":           n_sims,
         "initial_monthly":  initial_portfolio * initial_rate / 12,
         "rep_paths":        rep_paths,   # {10: [...], 50: [...], 90: [...]}
+    }
+
+
+def run_gk_historical(
+    initial_portfolio: float,
+    allocations: "dict[str, float]",          # {'0050': 0.90, '00859B': 0.05, '現金': 0.05}
+    start_ym: str,                            # 'YYYY-MM'
+    initial_rate: float,
+    guardrail_pct: float,
+    inflation_rate: float,
+    close_series: "dict[str, pd.Series]",     # pre-fetched adjusted close (daily)
+) -> dict:
+    """
+    以實際歷史報酬逐月執行 GK 提領策略。
+
+    每年一月：
+      1. 通膨調整（若資產未較前一月縮水）
+      2. 護欄檢查（capital_preservation / prosperity）
+      3. 再平衡回目標配置
+    回傳 monthly 逐月明細與 rebalances 年度再平衡明細。
+    """
+    start_ts = pd.Timestamp(start_ym + "-01")
+    # 截至上個月底（當月資料可能不完整）
+    today_ts  = pd.Timestamp.today().normalize()
+    end_ts    = (today_ts.replace(day=1) - pd.offsets.Day(1)).replace(day=1)
+    if end_ts < start_ts:
+        end_ts = start_ts
+
+    # 建立每月報酬查找表  (year, month) → float
+    monthly_ret_map: "dict[str, dict[tuple, float]]" = {}
+    for asset, close in close_series.items():
+        clean = close.replace(0, float("nan")).dropna()
+        monthly = clean.resample("ME").last().dropna()
+        rets    = monthly.pct_change().dropna()
+        monthly_ret_map[asset] = {
+            (ts.year, ts.month): float(r) for ts, r in rets.items()
+        }
+
+    cash_monthly  = (1 + CASH_RETURN) ** (1 / 12) - 1
+    upper_rate    = initial_rate * (1 + guardrail_pct)
+    lower_rate    = initial_rate * (1 - guardrail_pct)
+
+    # 狀態
+    asset_values     = {a: initial_portfolio * w for a, w in allocations.items()}
+    annual_withdrawal = initial_portfolio * initial_rate
+    monthly_income    = annual_withdrawal / 12
+    prev_jan_port     = initial_portfolio
+
+    monthly_records:   list[dict] = []
+    rebalance_records: list[dict] = []
+
+    months = pd.date_range(start=start_ts, end=end_ts, freq="MS")
+
+    for i, mts in enumerate(months):
+        ym      = (mts.year, mts.month)
+        is_jan  = (mts.month == 1) and (i > 0)
+        gk_trigger = ""
+
+        portfolio_now = sum(asset_values.values())
+
+        # ── 一月：GK 檢查 + 再平衡（在當月報酬套用之前）────────────────────
+        if is_jan and portfolio_now > 0:
+            # 通膨調整（資產未縮水才調）
+            if portfolio_now >= prev_jan_port:
+                annual_withdrawal *= (1 + inflation_rate)
+
+            # 護欄
+            cur_rate = annual_withdrawal / portfolio_now
+            if cur_rate > upper_rate:
+                annual_withdrawal *= 0.90
+                gk_trigger = "capital_preservation"
+            elif cur_rate < lower_rate:
+                annual_withdrawal *= 1.10
+                gk_trigger = "prosperity"
+            else:
+                gk_trigger = "inflation"
+
+            monthly_income = annual_withdrawal / 12
+
+            # 漂移配置
+            drift_alloc = {a: v / portfolio_now for a, v in asset_values.items()}
+
+            # 再平衡交易
+            trades = {
+                a: (allocations[a] - drift_alloc.get(a, 0.0)) * portfolio_now
+                for a in allocations
+            }
+
+            rebalance_records.append({
+                "year":             mts.year,
+                "month":            mts.strftime("%Y-%m"),
+                "portfolio":        portfolio_now,
+                "drift_alloc":      drift_alloc,
+                "target_alloc":     dict(allocations),
+                "trades":           trades,
+                "gk_trigger":       gk_trigger,
+                "monthly_income":   monthly_income,
+            })
+
+            # 套用再平衡
+            for a in asset_values:
+                asset_values[a] = portfolio_now * allocations[a]
+
+            prev_jan_port = portfolio_now
+
+        # ── 套用當月市場報酬 ─────────────────────────────────────────────────
+        port_before = sum(asset_values.values())
+
+        for a in list(asset_values.keys()):
+            if a == "現金":
+                ret = cash_monthly
+            else:
+                ret = monthly_ret_map.get(a, {}).get(ym, 0.0)
+            asset_values[a] *= (1 + ret)
+
+        port_after_return = sum(asset_values.values())
+        monthly_ret_pct = (
+            (port_after_return - port_before) / port_before * 100
+            if port_before > 0 else 0.0
+        )
+
+        # ── 扣除月提領 ───────────────────────────────────────────────────────
+        eff_wd = min(monthly_income, port_after_return)
+        if port_after_return > 0:
+            ratio = eff_wd / port_after_return
+            for a in asset_values:
+                asset_values[a] *= (1 - ratio)
+
+        port_end = max(0.0, port_after_return - eff_wd)
+        wr = annual_withdrawal / port_end * 100 if port_end > 0 else float("inf")
+
+        _trigger_label = {
+            "capital_preservation": "↓ 減提領 + 再平衡",
+            "prosperity":           "↑ 增提領 + 再平衡",
+            "inflation":            "通膨調整 + 再平衡",
+            "":                     "—",
+        }.get(gk_trigger if is_jan else "", "—")
+
+        monthly_records.append({
+            "月份":           mts.strftime("%Y-%m"),
+            "月報酬 %":       round(monthly_ret_pct, 2),
+            "資產餘額 (萬)":  round(port_end / 10_000, 1),
+            "月提領額":       round(monthly_income),
+            "提領率 %":       round(wr, 2),
+            "事件":           _trigger_label,
+        })
+
+    return {
+        "monthly":              monthly_records,
+        "rebalances":           rebalance_records,
+        "final_portfolio":      sum(asset_values.values()),
+        "final_monthly_income": monthly_income,
+        "asset_values":         dict(asset_values),
     }
 
 

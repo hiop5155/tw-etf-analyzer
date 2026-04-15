@@ -20,7 +20,8 @@ from etf_core import (
     load_token, fetch_adjusted_close, fetch_dividend_history,
     calc_comparison, calc_multi_compare, calc_target_monthly,
     simulate_gk_montecarlo, calc_return_vol,
-    fetch_stock_name,
+    fetch_stock_name, run_gk_historical,
+    CASH_RETURN, CASH_VOL,
 )
 
 # ── Streamlit 記憶體快取包裝（避免每次 rerun 重新讀 CSV / 打 API）─────────────
@@ -157,8 +158,8 @@ with st.spinner(f"載入 {stock_id} 資料..."):
         st.error(str(e)); st.stop()
 
 # ── 分頁 ──────────────────────────────────────────────────────────────────────
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
-    "📊 績效分析", "🎯 目標試算", "🏖️ 退休提領模擬", "📈 多檔比較", "💰 股利歷史"
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    "📊 績效分析", "🎯 目標試算", "🏖️ 退休提領模擬", "📈 多檔比較", "💰 股利歷史", "📋 提領追蹤",
 ])
 
 
@@ -496,8 +497,8 @@ with tab3:
     import numpy as np
 
     # 現金固定假設（無上市 ETF）
-    _CASH_RETURN = 0.015
-    _CASH_VOL    = 0.005
+    _CASH_RETURN = CASH_RETURN
+    _CASH_VOL    = CASH_VOL
 
     # 預設組合定義
     _PRESETS = {
@@ -894,6 +895,212 @@ with tab3:
         file_name= f"退休提領MC_{retire_asset_wan}萬_{retire_years}年.csv",
         mime     = "text/csv",
     )
+
+# ════════════════════════════════════════════════════════════════════════════
+# Tab 6：提領追蹤（GK 歷史實際報酬逐月追蹤 + 再平衡）
+# ════════════════════════════════════════════════════════════════════════════
+with tab6:
+    from datetime import date as _date
+    import numpy as _np6
+
+    st.subheader("📋 提領策略追蹤")
+    st.caption(
+        "輸入開始提領的時間與初始條件，系統以**歷史實際報酬**逐月追蹤 GK 提領策略結果。"
+        "每年一月自動進行 GK 護欄檢查與資產再平衡建議。"
+    )
+
+    # ── 參數輸入 ──────────────────────────────────────────────────────────────
+    st.markdown("#### ⚙️ 基本參數")
+    _ta, _tb, _tc, _td = st.columns(4)
+    tk6_port  = _ta.number_input("初始資產（萬 TWD）", min_value=1, value=2000, step=100, key="_w_tk6_port")
+    tk6_rate  = _tb.number_input("初始提領率 %",       min_value=0.5, max_value=15.0, value=4.0, step=0.5, key="_w_tk6_rate")
+    tk6_guard = _tc.number_input("護欄 %",             min_value=1,  max_value=50,   value=20,  step=5,   key="_w_tk6_guard")
+    tk6_infl  = _td.number_input("通膨率 %",           min_value=0.0, max_value=10.0, value=2.0, step=0.5, key="_w_tk6_infl")
+
+    _te, _tf = st.columns([1, 3])
+    tk6_start = _te.date_input(
+        "開始提領月份",
+        value=_date(2024, 1, 1),
+        min_value=_date(2003, 1, 1),
+        key="_w_tk6_start",
+        help="選擇月份即可，日期忽略",
+    )
+
+    st.markdown("#### 📦 持倉配置（目標比例）")
+    _tk6_default_rows = [
+        {"代號": "0050",   "配置比例 %": 90},
+        {"代號": "00859B", "配置比例 %": 5},
+        {"代號": "現金",   "配置比例 %": 5},
+    ]
+    if "tk6_alloc_base" not in st.session_state:
+        st.session_state["tk6_alloc_base"] = _tk6_default_rows
+
+    tk6_editor = st.data_editor(
+        pd.DataFrame(st.session_state["tk6_alloc_base"]),
+        num_rows="dynamic",
+        column_config={
+            "代號":       st.column_config.TextColumn("代號", width="small"),
+            "配置比例 %": st.column_config.NumberColumn("配置比例 %", min_value=0, max_value=100, step=1),
+        },
+        hide_index=True,
+        key="_tk6_editor",
+        use_container_width=False,
+        width=320,
+    )
+    st.session_state["tk6_alloc_df"] = tk6_editor
+
+    # 驗證總和
+    _tk6_total = int(tk6_editor["配置比例 %"].sum())
+    if _tk6_total != 100:
+        st.warning(f"配置比例總和為 {_tk6_total}%，需等於 100% 才能執行。")
+        st.stop()
+
+    # 建立 allocations dict
+    tk6_allocations: dict[str, float] = {
+        str(row["代號"]).strip().upper(): row["配置比例 %"] / 100
+        for _, row in tk6_editor.iterrows()
+        if str(row["代號"]).strip() and row["配置比例 %"] > 0
+    }
+    # 現金特殊處理（不大寫）
+    if "現金" not in tk6_allocations and "現金".upper() in tk6_allocations:
+        tk6_allocations["現金"] = tk6_allocations.pop("現金".upper())
+    # 修正大寫問題
+    _fixed = {}
+    for k, v in tk6_allocations.items():
+        _fixed["現金" if k in ("現金", "CASH", "現金".upper()) else k] = v
+    tk6_allocations = _fixed
+
+    st.divider()
+
+    # ── 取得歷史資料 ──────────────────────────────────────────────────────────
+    _tk6_close_map: dict[str, pd.Series] = {}
+    _tk6_fetch_errors = []
+    for _asset in tk6_allocations:
+        if _asset == "現金":
+            continue
+        try:
+            _close, _ = _cached_adjusted_close(_asset, token)
+            _tk6_close_map[_asset] = _close
+        except Exception as _e:
+            _tk6_fetch_errors.append(f"{_asset}：{_e}")
+
+    if _tk6_fetch_errors:
+        for _err in _tk6_fetch_errors:
+            st.error(f"資料取得失敗 — {_err}")
+        st.stop()
+
+    # ── 執行歷史追蹤 ──────────────────────────────────────────────────────────
+    _tk6_start_ym = tk6_start.strftime("%Y-%m")
+    try:
+        with st.spinner("以歷史資料逐月計算 GK 提領策略..."):
+            _tk6_result = run_gk_historical(
+                initial_portfolio = tk6_port * 10_000,
+                allocations       = tk6_allocations,
+                start_ym          = _tk6_start_ym,
+                initial_rate      = tk6_rate / 100,
+                guardrail_pct     = tk6_guard / 100,
+                inflation_rate    = tk6_infl / 100,
+                close_series      = _tk6_close_map,
+            )
+    except Exception as _e:
+        st.error(f"計算失敗：{_e}")
+        st.stop()
+
+    _tk6_monthly    = _tk6_result["monthly"]
+    _tk6_rebalances = _tk6_result["rebalances"]
+
+    if not _tk6_monthly:
+        st.warning("所選月份無歷史資料，請調整起始月份。")
+        st.stop()
+
+    # ── 摘要指標 ──────────────────────────────────────────────────────────────
+    _tk6_m1, _tk6_m2, _tk6_m3, _tk6_m4 = st.columns(4)
+    _tk6_m1.metric("目前資產",       f"{_tk6_result['final_portfolio']/10_000:,.0f} 萬 TWD")
+    _tk6_m2.metric("目前月提領額",   f"{_tk6_result['final_monthly_income']:,.0f} TWD")
+    _initial_monthly = tk6_port * 10_000 * tk6_rate / 100 / 12
+    _tk6_m3.metric("初始月提領額",   f"{_initial_monthly:,.0f} TWD",
+                   delta=f"{_tk6_result['final_monthly_income'] - _initial_monthly:+,.0f}")
+    _tk6_m4.metric("追蹤期間",       f"{len(_tk6_monthly)} 個月 / {len(_tk6_rebalances)} 次再平衡")
+
+    # ── 逐月明細表 ────────────────────────────────────────────────────────────
+    with st.expander("📅 逐月明細", expanded=False):
+        st.dataframe(pd.DataFrame(_tk6_monthly), hide_index=True, use_container_width=True)
+
+    # ── 年度再平衡事件 ────────────────────────────────────────────────────────
+    if _tk6_rebalances:
+        st.markdown("#### 🔄 年度再平衡事件（每年一月）")
+        st.caption("GK 護欄檢查與資產再平衡建議。最新一筆可輸入實際持倉取得精確交易指示。")
+
+        _gk_label_map = {
+            "capital_preservation": "↓ 減提領 10%（提領率過高）",
+            "prosperity":           "↑ 增提領 10%（提領率過低）",
+            "inflation":            "通膨調整（無護欄觸發）",
+        }
+
+        for _rb in _tk6_rebalances:
+            _is_latest = (_rb is _tk6_rebalances[-1])
+            _rb_title = (
+                f"**{_rb['year']} 年一月再平衡**　｜　"
+                f"資產 {_rb['portfolio']/10_000:,.0f} 萬　｜　"
+                f"新月提領 {_rb['monthly_income']:,.0f} TWD"
+            )
+            with st.expander(_rb_title, expanded=_is_latest):
+                # GK 調整
+                st.info(f"GK 調整：{_gk_label_map.get(_rb['gk_trigger'], '—')}")
+
+                # 配置漂移表
+                _alloc_rows = []
+                for _a in _rb["target_alloc"]:
+                    _target = _rb["target_alloc"][_a] * 100
+                    _drift  = _rb["drift_alloc"].get(_a, 0.0) * 100
+                    _trade  = _rb["trades"].get(_a, 0.0)
+                    _alloc_rows.append({
+                        "標的":             _a,
+                        "目標 %":           f"{_target:.1f}",
+                        "漂移後實際 %":     f"{_drift:.1f}",
+                        "偏差":             f"{_drift - _target:+.1f}",
+                        "再平衡建議（萬）": (
+                            f"{'買入' if _trade > 0 else '賣出'} {abs(_trade)/10_000:,.1f}"
+                            if abs(_trade) > 500 else "—"
+                        ),
+                    })
+                st.dataframe(pd.DataFrame(_alloc_rows), hide_index=True, use_container_width=False, width=600)
+
+                # ── 最新事件：互動式實際持倉輸入 ─────────────────────────────
+                if _is_latest:
+                    st.markdown("---")
+                    st.markdown("**💡 輸入您的實際持倉，取得精確再平衡建議**")
+                    st.caption("預設值為理論漂移後金額，請依實際帳戶餘額修改。")
+
+                    _actual_cols = st.columns(len(_rb["target_alloc"]))
+                    _actual_vals: dict[str, float] = {}
+                    for _j, (_a, _tw) in enumerate(_rb["target_alloc"].items()):
+                        _default = round(_rb["portfolio"] * _rb["drift_alloc"].get(_a, _tw) / 10_000, 1)
+                        _actual_vals[_a] = _actual_cols[_j].number_input(
+                            f"{_a}（萬）",
+                            min_value=0.0,
+                            value=float(_default),
+                            step=1.0,
+                            key=f"_tk6_act_{_a}_{_rb['year']}",
+                        )
+
+                    _total_actual = sum(_actual_vals.values()) * 10_000
+                    if _total_actual > 0:
+                        st.markdown(f"**總資產：{_total_actual/10_000:,.1f} 萬 → 再平衡至目標配置：**")
+                        _trade_cols = st.columns(len(_rb["target_alloc"]))
+                        for _j, (_a, _tw) in enumerate(_rb["target_alloc"].items()):
+                            _cur  = _actual_vals[_a] * 10_000
+                            _tgt  = _total_actual * _tw
+                            _delta = _tgt - _cur
+                            _op    = "買入" if _delta > 0 else "賣出"
+                            _trade_cols[_j].metric(
+                                _a,
+                                f"{_op} {abs(_delta)/10_000:,.1f} 萬",
+                                delta=f"{_delta/10_000:+.1f} 萬",
+                                delta_color="normal" if _delta > 0 else "inverse",
+                            )
+    else:
+        st.info("尚無再平衡事件（提領開始後的第一個一月才會觸發）。")
 
 # ── 寫入 localStorage（單一 key 打包，只觸發最多一次 rerun）────────────────────
 _ls_all: dict = {
