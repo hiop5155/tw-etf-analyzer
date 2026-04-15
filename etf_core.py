@@ -625,7 +625,7 @@ def simulate_gk_montecarlo(
         return records
 
     rep_paths: dict[int, list[dict]] = {}
-    for pct in (10, 50, 90):
+    for pct in (1, 10, 50, 90):
         idx = sorted_idx[int(n_sims * pct / 100)]
         rep_paths[pct] = _gk_trace(ret_mat[idx])
 
