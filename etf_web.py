@@ -849,7 +849,7 @@ with tab3:
             (50, "😐 中位路徑 P50　（最終資產排第 50%，典型情境）"),
             (90, "😊 樂觀路徑 P90　（最終資產排第 90%，投資環境較好）"),
         ]:
-            with st.expander(label, expanded=(pct == 50)):
+            with st.expander(label, expanded=(pct == 1)):
                 st.dataframe(
                     pd.DataFrame(mc["rep_paths"][pct]),
                     width="stretch", hide_index=True,
