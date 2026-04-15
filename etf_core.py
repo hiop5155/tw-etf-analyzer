@@ -673,10 +673,21 @@ def run_gk_historical(
 
     # 建立每月報酬查找表  (year, month) → float
     monthly_ret_map: "dict[str, dict[tuple, float]]" = {}
+    _data_warnings: list[str] = []
     for asset, close in close_series.items():
-        clean = close.replace(0, float("nan")).dropna()
+        clean   = close.replace(0, float("nan")).dropna()
         monthly = clean.resample("ME").last().dropna()
         rets    = monthly.pct_change().dropna()
+        if rets.empty:
+            _data_warnings.append(f"{asset}：歷史資料不足，無法計算月報酬，將以 0% 計算。")
+        else:
+            first_data_ym = (rets.index[0].year, rets.index[0].month)
+            start_ym_tuple = (start_ts.year, start_ts.month)
+            if first_data_ym > start_ym_tuple:
+                _data_warnings.append(
+                    f"{asset}：資料起始於 {rets.index[0].strftime('%Y-%m')}，"
+                    f"早於此日期的月份以 0% 報酬計算。"
+                )
         monthly_ret_map[asset] = {
             (ts.year, ts.month): float(r) for ts, r in rets.items()
         }
@@ -703,50 +714,45 @@ def run_gk_historical(
 
         portfolio_now = sum(asset_values.values())
 
-        # ── 一月：GK 檢查 + 再平衡（在當月報酬套用之前）────────────────────
+        # ── 一月：通膨調整（在護欄檢查之前）────────────────────────────────
         if is_jan and portfolio_now > 0:
-            # 通膨調整（資產未縮水才調）
             if portfolio_now >= prev_jan_port:
                 annual_withdrawal *= (1 + inflation_rate)
+            monthly_income = annual_withdrawal / 12
+            prev_jan_port = portfolio_now
 
-            # 護欄
+        # ── 每月：護欄檢查（含一月）─────────────────────────────────────────
+        if portfolio_now > 0:
             cur_rate = annual_withdrawal / portfolio_now
             if cur_rate > upper_rate:
                 annual_withdrawal *= 0.90
                 gk_trigger = "capital_preservation"
-            elif cur_rate < lower_rate:
+                monthly_income = annual_withdrawal / 12
+            elif cur_rate < lower_rate and portfolio_now >= prev_jan_port:
+                # Prosperity rule：僅資產未低於上一個一月才觸發（標準 GK）
                 annual_withdrawal *= 1.10
                 gk_trigger = "prosperity"
-            else:
-                gk_trigger = "inflation"
+                monthly_income = annual_withdrawal / 12
 
-            monthly_income = annual_withdrawal / 12
-
-            # 漂移配置
+        # ── 一月：再平衡（護欄調整後）────────────────────────────────────────
+        if is_jan and portfolio_now > 0:
             drift_alloc = {a: v / portfolio_now for a, v in asset_values.items()}
-
-            # 再平衡交易
             trades = {
                 a: (allocations[a] - drift_alloc.get(a, 0.0)) * portfolio_now
                 for a in allocations
             }
-
             rebalance_records.append({
-                "year":             mts.year,
-                "month":            mts.strftime("%Y-%m"),
-                "portfolio":        portfolio_now,
-                "drift_alloc":      drift_alloc,
-                "target_alloc":     dict(allocations),
-                "trades":           trades,
-                "gk_trigger":       gk_trigger,
-                "monthly_income":   monthly_income,
+                "year":           mts.year,
+                "month":          mts.strftime("%Y-%m"),
+                "portfolio":      portfolio_now,
+                "drift_alloc":    drift_alloc,
+                "target_alloc":   dict(allocations),
+                "trades":         trades,
+                "gk_trigger":     gk_trigger,
+                "monthly_income": monthly_income,
             })
-
-            # 套用再平衡
             for a in asset_values:
                 asset_values[a] = portfolio_now * allocations[a]
-
-            prev_jan_port = portfolio_now
 
         # ── 套用當月市場報酬 ─────────────────────────────────────────────────
         port_before = sum(asset_values.values())
@@ -774,12 +780,19 @@ def run_gk_historical(
         port_end = max(0.0, port_after_return - eff_wd)
         wr = annual_withdrawal / port_end * 100 if port_end > 0 else float("inf")
 
-        _trigger_label = {
-            "capital_preservation": "↓ 減提領 + 再平衡",
-            "prosperity":           "↑ 增提領 + 再平衡",
-            "inflation":            "通膨調整 + 再平衡",
-            "":                     "—",
-        }.get(gk_trigger if is_jan else "", "—")
+        if is_jan:
+            if gk_trigger == "capital_preservation":
+                _trigger_label = "↓ 減提領 + 再平衡"
+            elif gk_trigger == "prosperity":
+                _trigger_label = "↑ 增提領 + 再平衡"
+            else:
+                _trigger_label = "通膨調整 + 再平衡"
+        elif gk_trigger == "capital_preservation":
+            _trigger_label = "↓ 減提領"
+        elif gk_trigger == "prosperity":
+            _trigger_label = "↑ 增提領"
+        else:
+            _trigger_label = "—"
 
         monthly_records.append({
             "月份":           mts.strftime("%Y-%m"),
@@ -796,6 +809,7 @@ def run_gk_historical(
         "final_portfolio":      sum(asset_values.values()),
         "final_monthly_income": monthly_income,
         "asset_values":         dict(asset_values),
+        "data_warnings":        _data_warnings,
     }
 
 
