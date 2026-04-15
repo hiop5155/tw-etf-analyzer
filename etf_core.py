@@ -242,6 +242,8 @@ def calc_target_monthly(
     # 今日還需額外一次性投入（目標現值 - 現有持倉）
     lump_sum = max(target / (1 + r_a) ** years - existing, 0.0)
 
+    terminal_value = existing_fv + remaining
+
     return {
         "monthly"        : monthly,
         "lump_sum_today" : lump_sum,
@@ -249,6 +251,7 @@ def calc_target_monthly(
         "existing_fv"    : existing_fv,
         "remaining"      : remaining,
         "total_gain"     : target - existing - total_invested,
+        "terminal_value" : terminal_value,
     }
 
 

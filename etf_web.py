@@ -326,11 +326,12 @@ with tab2:
     existing_twd = existing_wan * 10_000
     base = calc_target_monthly(target_twd, target_years, lump_full.cagr_pct, existing=existing_twd)
 
-    rc1, rc2, rc3, rc4 = st.columns(4)
+    rc1, rc2, rc3, rc4, rc5 = st.columns(5)
     rc1.metric("每月需投入",       f"{base['monthly']:,.0f} TWD")
     rc2.metric("一次性投入等效",   f"{base['lump_sum_today']:,.0f} TWD")
     rc3.metric("現有持倉屆時終值", f"{base['existing_fv']:,.0f} TWD")
     rc4.metric("新增投入本金",     f"{base['total_invested']:,.0f} TWD")
+    rc5.metric("預估最終資產終值", f"{base['terminal_value']:,.0f} TWD")
 
     if base['monthly'] == 0:
         st.success(f"🎉 現有持倉預計 {target_years} 年後即可達標，不需額外定投！")
@@ -355,6 +356,7 @@ with tab2:
             "持倉屆時終值"    : f"{res['existing_fv']:,.0f}",
             "每月投入 (TWD)"  : f"{res['monthly']:,.0f}",
             "新增投入本金"    : f"{res['total_invested']:,.0f}",
+            "最終資產終值"    : f"{res['terminal_value']:,.0f}",
             "預計獲利 (TWD)"  : f"{res['total_gain']:,.0f}",
         })
     sens_df = pd.DataFrame(scenario_rows)
