@@ -3,3 +3,4 @@ stock_cache/
 __pycache__/
 *.pyc
 *.stackdump
+.claude/

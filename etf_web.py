@@ -194,7 +194,7 @@ with tab1:
             value=min_date,
             min_value=min_date,
             max_value=max_date,
-            key="custom_start_date",
+            key=f"custom_start_date_{stock_id}",
         )
         if custom_start > min_date:
             st.caption(f"上市日為 {min_date}，目前從 {custom_start} 開始分析")
@@ -326,12 +326,13 @@ with tab2:
     existing_twd = existing_wan * 10_000
     base = calc_target_monthly(target_twd, target_years, lump_full.cagr_pct, existing=existing_twd)
 
-    rc1, rc2, rc3, rc4, rc5 = st.columns(5)
+    rc1, rc2, rc3 = st.columns(3)
     rc1.metric("每月需投入",       f"{base['monthly']:,.0f} TWD")
     rc2.metric("一次性投入等效",   f"{base['lump_sum_today']:,.0f} TWD")
     rc3.metric("現有持倉屆時終值", f"{base['existing_fv']:,.0f} TWD")
-    rc4.metric("新增投入本金",     f"{base['total_invested']:,.0f} TWD")
-    rc5.metric("預估最終資產終值", f"{base['terminal_value']:,.0f} TWD")
+    rd1, rd2, rd3 = st.columns(3)
+    rd1.metric("新增投入本金",     f"{base['total_invested']:,.0f} TWD")
+    rd2.metric("預估最終資產終值", f"{base['terminal_value']:,.0f} TWD")
 
     if base['monthly'] == 0:
         st.success(f"🎉 現有持倉預計 {target_years} 年後即可達標，不需額外定投！")
