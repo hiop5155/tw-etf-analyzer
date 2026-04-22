@@ -50,7 +50,7 @@ Streamlit Secrets → `.env` 檔 → 環境變數 `FINMIND_TOKEN`
 
 **短歷史警告**：歷史資料不足 10 年的標的標示 ⚠️，CAGR 可能因短期多頭偏高。
 
-**現金假設**：`現金` 無代號，固定 return=1.5%、vol=0.5%（`_CASH_RETURN` / `_CASH_VOL`）。
+**現金假設**：`現金` 無代號，固定 return=0%、vol=0%（`_CASH_RETURN` / `_CASH_VOL`）。代表實際現金（活存/抽屜），不含貨幣市場收益；想納入短期收益請改用短期債券 ETF。
 
 **多檔比較**：以最晚上市的日期為共同起始點。
 

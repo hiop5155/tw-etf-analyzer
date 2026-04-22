@@ -31,8 +31,8 @@ def _safe_cagr(end_val: float, start_val: float, years: float) -> float:
     return ((end_val / start_val) ** (1.0 / years) - 1) * 100
 
 # ── 現金假設 ──────────────────────────────────────────────────────────────────
-CASH_RETURN: float = 0.015   # 年化報酬（固定假設）
-CASH_VOL:    float = 0.005   # 年化波動度
+CASH_RETURN: float = 0.0     # 年化報酬（現金 = 真現金，不含收益）
+CASH_VOL:    float = 0.0     # 年化波動度（想要貨幣市場收益請改用短期債券 ETF）
 
 # ── 路徑 ──────────────────────────────────────────────────────────────────────
 _HERE      = Path(__file__).parent
