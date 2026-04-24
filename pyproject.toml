@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tw-etf-analyzer"
+version = "0.2.0"
+description = "台股 ETF / 股票績效分析與退休規劃工具(資料來源:FinMind)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+    { name = "jimmy.lee" },
+]
+keywords = ["taiwan", "etf", "finance", "retirement", "monte-carlo", "guyton-klinger"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Operating System :: OS Independent",
+    "Topic :: Office/Business :: Financial :: Investment",
+]
+dependencies = [
+    "streamlit>=1.30",
+    "pandas>=2.2",
+    "numpy>=1.26",
+    "plotly>=5.18",
+    "openpyxl",
+    "streamlit-local-storage",
+    "weasyprint",
+    "kaleido",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-cov",
+]
+
+[project.scripts]
+twetf = "tw_etf_analyzer.cli.main:main"
+
+[project.urls]
+Homepage = "https://github.com/jimmy-lee/tw-etf-analyzer"
+
+[tool.setuptools.packages.find]
+include = ["tw_etf_analyzer*"]
+exclude = ["tests*", "fonts*", "stock_cache*", ".venv*"]
+
+[tool.setuptools.package-data]
+"tw_etf_analyzer" = []

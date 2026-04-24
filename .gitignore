@@ -1,11 +1,15 @@
 .env
-stock_cache/
+.venv/
+.codex/
+.claude/
 __pycache__/
 *.pyc
 *.stackdump
-.claude/
-.venv/                                                                                              
-.codex/
-stock_cache/                                                     
-*.stackdump                                                                                          
-fonts/NotoSansCJK*.otf 
+
+# 本地快取(執行時建立)
+stock_cache/
+
+# Build / egg-info
+*.egg-info/
+build/
+dist/
