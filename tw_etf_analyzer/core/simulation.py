@@ -148,6 +148,9 @@ def simulate_gk_montecarlo(
     else:
         ret_mat = rng.normal(annual_return, annual_volatility, size=(n_sims, years))
 
+    # 單一未槓桿投組年報酬下限 = -100%(資產歸零),防止分配尾端產生負資產
+    ret_mat = np.clip(ret_mat, -0.99, None)
+
     port_mat = np.zeros((n_sims, years))
     wd_mat   = np.zeros((n_sims, years))
 

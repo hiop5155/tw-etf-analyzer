@@ -110,7 +110,7 @@ def render(ctx: AppContext) -> None:
     allocations: dict[str, float] = {
         str(row["代號"]).strip().upper(): row["配置比例 %"] / 100
         for _, row in editor.iterrows()
-        if str(row["代號"]).strip() and row["配置比例 %"] > 0
+        if str(row["代號"]).strip() and pd.notna(row["配置比例 %"]) and row["配置比例 %"] > 0
     }
     if "現金" not in allocations and "現金".upper() in allocations:
         allocations["現金"] = allocations.pop("現金".upper())

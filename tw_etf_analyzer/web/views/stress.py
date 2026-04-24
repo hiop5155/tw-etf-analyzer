@@ -44,7 +44,7 @@ def render(ctx: AppContext) -> None:
     stress_alloc: dict[str, float] = {
         str(r["代號"]).strip().upper(): r["配置比例 %"] / 100
         for r in stress_rows
-        if str(r["代號"]).strip() and r["配置比例 %"] > 0
+        if str(r["代號"]).strip() and pd.notna(r["配置比例 %"]) and r["配置比例 %"] > 0
     }
     stress_alloc = {("現金" if k in ("現金", "CASH") else k): v for k, v in stress_alloc.items()}
 
@@ -160,25 +160,26 @@ def render(ctx: AppContext) -> None:
     )
     st.plotly_chart(fig, width="stretch")
 
-    # GK 事件彙總
-    with st.expander("🛡️ GK 護欄觸發事件彙總", expanded=False):
-        rows = []
-        for res in stress_results:
-            sc, r = res["sc"], res["r"]
-            for m in r["monthly"]:
-                if m["事件"] not in ("—", "通膨調整 + 再平衡"):
-                    rows.append({
-                        "情境":    sc["name"],
-                        "月份":    m["月份"],
-                        "資產(萬)": m["資產餘額 (萬)"],
-                        "月提領":  m["月提領額"],
-                        "提領率%": m["提領率 %"],
-                        "事件":    m["事件"],
-                    })
-        if rows:
-            st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
-        else:
-            st.info("此期間無護欄觸發(僅通膨調整)")
+    # GK 事件彙總（每個情境獨立一張可摺疊表格）
+    st.markdown("#### 🛡️ GK 護欄觸發事件彙總")
+    for res in stress_results:
+        sc, r = res["sc"], res["r"]
+        rows = [
+            {
+                "月份":    m["月份"],
+                "資產(萬)": m["資產餘額 (萬)"],
+                "月提領":  m["月提領額"],
+                "提領率%": m["提領率 %"],
+                "事件":    m["事件"],
+            }
+            for m in r["monthly"]
+            if m["事件"] not in ("—", "通膨調整 + 再平衡")
+        ]
+        with st.expander(f"{sc['name']}　({len(rows)} 次觸發)", expanded=False):
+            if rows:
+                st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
+            else:
+                st.info("此期間無護欄觸發(僅通膨調整)")
 
 
 def _splice_proxy(

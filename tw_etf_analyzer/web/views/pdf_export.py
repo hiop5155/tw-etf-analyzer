@@ -283,7 +283,7 @@ def _add_tracking_section(builder: PDFReportBuilder, ctx: AppContext) -> None:
         tk_alloc = {
             str(r["代號"]).strip().upper(): r["配置比例 %"] / 100
             for _, r in tk_alloc_df.iterrows()
-            if str(r["代號"]).strip() and r["配置比例 %"] > 0
+            if str(r["代號"]).strip() and pd.notna(r["配置比例 %"]) and r["配置比例 %"] > 0
         }
         tk_alloc = {("現金" if k in ("現金", "CASH") else k): v for k, v in tk_alloc.items()}
         tk_close: dict[str, pd.Series] = {}
