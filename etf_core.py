@@ -34,6 +34,122 @@ def _safe_cagr(end_val: float, start_val: float, years: float) -> float:
 CASH_RETURN: float = 0.0     # 年化報酬（現金 = 真現金，不含收益）
 CASH_VOL:    float = 0.0     # 年化波動度（想要貨幣市場收益請改用短期債券 ETF）
 
+# ── 稅費常數 ──────────────────────────────────────────────────────────────────
+# 股利稅：合併課稅（income_tax_bracket − 8.5% 可抵減，抵減上限 80,000）
+# 分離課稅固定 28%；系統自動選較低者
+NHI_THRESHOLD: float            = 20_000    # 單筆股利 ≥ 此金額課二代健保補充保費
+NHI_RATE: float                 = 0.0211
+COMBINED_DEDUCTION_RATE: float  = 0.085
+COMBINED_DEDUCTION_CAP: float   = 80_000
+SEPARATE_TAX_RATE: float        = 0.28
+
+# 預設手續費率（買進 0.1425% × 五折；賣出 = 手續費五折 + 證交稅 0.1%）
+DEFAULT_BUY_FEE_RATE: float  = 0.0007125
+DEFAULT_SELL_FEE_RATE: float = 0.0017125
+
+
+@dataclass
+class TaxFeeConfig:
+    """全域稅費設定，由 Streamlit 側邊欄控制。"""
+    enabled:            bool  = False
+    income_tax_bracket: float = 0.12       # 綜所稅率（小數；5/12/20/30/40%）
+    buy_fee_rate:       float = DEFAULT_BUY_FEE_RATE
+    sell_fee_rate:      float = DEFAULT_SELL_FEE_RATE
+
+
+def effective_dividend_tax_rate(dividend_amount: float, income_tax_bracket: float) -> tuple[float, str]:
+    """對單筆股利金額，自動選擇「合併 vs 分離課稅」較小者。
+
+    回傳 (有效稅率, 'combined'/'separate')。不含二代健保。
+    """
+    if dividend_amount <= 0:
+        return 0.0, "combined"
+    combined_tax = max(
+        0.0,
+        dividend_amount * income_tax_bracket
+        - min(dividend_amount * COMBINED_DEDUCTION_RATE, COMBINED_DEDUCTION_CAP),
+    )
+    separate_tax = dividend_amount * SEPARATE_TAX_RATE
+    if combined_tax <= separate_tax:
+        return combined_tax / dividend_amount, "combined"
+    return SEPARATE_TAX_RATE, "separate"
+
+
+def dividend_net_ratio(annual_dividend: float, income_tax_bracket: float) -> float:
+    """對一年份股利總額，回傳「到手比率」(扣所得稅 + 二代健保後 / 毛股利)。"""
+    if annual_dividend <= 0:
+        return 1.0
+    tax_rate, _ = effective_dividend_tax_rate(annual_dividend, income_tax_bracket)
+    nhi = NHI_RATE if annual_dividend >= NHI_THRESHOLD else 0.0
+    return max(0.0, 1.0 - tax_rate - nhi)
+
+
+def avg_annual_dividend_yield(dividends_df: "pd.DataFrame", close: "pd.Series") -> float:
+    """從股利明細估算歷史平均年殖利率（小數）。會排除首尾不完整的年份。"""
+    if dividends_df is None or dividends_df.empty or close.empty:
+        return 0.0
+    df = dividends_df.copy()
+    df["date"] = pd.to_datetime(df["date"])
+    df["year"] = df["date"].dt.year
+    if "cash_dividend" not in df.columns:
+        return 0.0
+    annual = df.groupby("year")["cash_dividend"].sum()
+    if annual.empty:
+        return 0.0
+    first_yr, last_yr = close.index[0].year, close.index[-1].year
+    complete = [y for y in annual.index if y not in (first_yr, last_yr)]
+    avg_div_per_share = float(annual.loc[complete].mean()) if complete else float(annual.mean())
+    avg_price = float(close.mean())
+    if avg_price <= 0:
+        return 0.0
+    return avg_div_per_share / avg_price
+
+
+def calc_tax_drag(
+    dividend_yield: float,
+    portfolio_value: float,
+    tax: TaxFeeConfig,
+) -> float:
+    """計算股利稅 + 二代健保造成的年化 CAGR 拖累（小數）。
+
+    portfolio_value 用於估算年股利總額，決定 NHI 是否觸發。
+    """
+    if not tax.enabled or dividend_yield <= 0 or portfolio_value <= 0:
+        return 0.0
+    annual_div_est = dividend_yield * portfolio_value
+    net_ratio = dividend_net_ratio(annual_div_est, tax.income_tax_bracket)
+    return dividend_yield * (1.0 - net_ratio)
+
+
+def calc_fee_drag(tax: TaxFeeConfig, turnover_per_year: float = 0.0) -> float:
+    """交易成本年化拖累：買入成本 + 年度再平衡周轉造成的賣出成本。
+
+    * DCA 情境：每年投入金額相對總資產小，買入成本拖累近似買費率 × 當期再投入 / 總資產。
+      保守用 buy_fee × 1（視為一次性 drag），賣出成本在退休階段才計。
+    * turnover_per_year：投組每年換手率（0 ~ 1），預設 0 = 純買進持有。
+    """
+    if not tax.enabled:
+        return 0.0
+    # 買進拖累：視為單次成本，轉年化時影響很小 → 這裡只回傳「每次買進自動扣的率」，
+    # 真正套用在每月 DCA 買入時（見 apply_buy_fee）。此函式主要給「退休提領」等週期性賣出情境。
+    return tax.sell_fee_rate * turnover_per_year
+
+
+def apply_buy_fee(amount: float, tax: TaxFeeConfig) -> tuple[float, float]:
+    """套用買進手續費：回傳 (實際買到的金額, 手續費金額)。"""
+    if not tax.enabled:
+        return amount, 0.0
+    fee = amount * tax.buy_fee_rate
+    return amount - fee, fee
+
+
+def apply_sell_fee(amount: float, tax: TaxFeeConfig) -> tuple[float, float]:
+    """套用賣出手續費+證交稅：回傳 (實拿, 總費)。"""
+    if not tax.enabled:
+        return amount, 0.0
+    fee = amount * tax.sell_fee_rate
+    return amount - fee, fee
+
 # ── 路徑 ──────────────────────────────────────────────────────────────────────
 _HERE      = Path(__file__).parent
 CACHE_DIR  = _HERE / "stock_cache"
@@ -518,6 +634,138 @@ def calc_return_vol(close: pd.Series) -> tuple[float, float]:
     return cagr, annual_vol
 
 
+# ── 風險調整報酬指標 ─────────────────────────────────────────────────────────
+@dataclass
+class RiskMetrics:
+    cagr_pct:      float       # 年化報酬 %
+    vol_pct:       float       # 年化波動度 %
+    mdd_pct:       float       # 最大回撤 %（負值）
+    mdd_peak_date: pd.Timestamp | None
+    mdd_trough_date: pd.Timestamp | None
+    mdd_recovery_date: pd.Timestamp | None  # 若尚未回復則為 None
+    sharpe:        float       # 年化 Sharpe Ratio
+    sortino:       float       # 年化 Sortino Ratio
+    calmar:        float       # CAGR / |MDD|
+
+
+def calc_max_drawdown(close: pd.Series) -> dict:
+    """計算最大回撤。回傳 (mdd, peak_date, trough_date, recovery_date)。
+
+    mdd 為負值（小數）；若尚未回復到新高，recovery_date 為 None。
+    """
+    close = close.replace(0, float("nan")).dropna()
+    if len(close) < 2:
+        return {"mdd": 0.0, "peak": None, "trough": None, "recovery": None}
+
+    running_max = close.cummax()
+    drawdown    = close / running_max - 1.0
+    mdd_val     = float(drawdown.min())
+    trough_idx  = drawdown.idxmin()
+    # Peak 是 trough 之前的最高點
+    prior = close.loc[:trough_idx]
+    peak_idx = prior.idxmax()
+    peak_val = float(close.loc[peak_idx])
+    # Recovery：trough 之後第一次回到 peak 以上
+    after = close.loc[trough_idx:]
+    recovered = after[after >= peak_val]
+    recovery_idx = recovered.index[0] if len(recovered) > 0 else None
+
+    return {
+        "mdd":      mdd_val,
+        "peak":     peak_idx,
+        "trough":   trough_idx,
+        "recovery": recovery_idx,
+    }
+
+
+def calc_sharpe_ratio(close: pd.Series, risk_free_rate: float = 0.0) -> float:
+    """年化 Sharpe = (CAGR - Rf) / 年化波動度。"""
+    cagr, vol = calc_return_vol(close)
+    if vol <= 0:
+        return 0.0
+    return (cagr - risk_free_rate) / vol
+
+
+def calc_sortino_ratio(close: pd.Series, risk_free_rate: float = 0.0, target: float = 0.0) -> float:
+    """年化 Sortino = (CAGR - Rf) / 年化下行波動度。
+
+    下行波動度：只計算報酬 < target 的日報酬標準差。
+    """
+    close = close.replace(0, float("nan")).dropna()
+    if len(close) < 2:
+        return 0.0
+    cagr, _ = calc_return_vol(close)
+    daily_ret = close.pct_change().dropna()
+    # 每日 target：(1+target)^(1/252) - 1
+    daily_target = (1 + target) ** (1 / 252) - 1 if target > -1 else 0.0
+    downside = daily_ret[daily_ret < daily_target] - daily_target
+    if len(downside) < 2:
+        return 0.0
+    downside_vol = float(downside.std() * np.sqrt(252))
+    if downside_vol <= 0:
+        return 0.0
+    return (cagr - risk_free_rate) / downside_vol
+
+
+def calc_risk_metrics(close: pd.Series, risk_free_rate: float = 0.0) -> RiskMetrics:
+    """一次計算所有風險調整報酬指標。"""
+    close = close.replace(0, float("nan")).dropna()
+    if len(close) < 2:
+        return RiskMetrics(0, 0, 0, None, None, None, 0, 0, 0)
+    cagr, vol = calc_return_vol(close)
+    dd = calc_max_drawdown(close)
+    sharpe = calc_sharpe_ratio(close, risk_free_rate)
+    sortino = calc_sortino_ratio(close, risk_free_rate)
+    mdd = dd["mdd"]
+    calmar = cagr / abs(mdd) if mdd < 0 else 0.0
+    return RiskMetrics(
+        cagr_pct        = cagr * 100,
+        vol_pct         = vol * 100,
+        mdd_pct         = mdd * 100,
+        mdd_peak_date   = dd["peak"],
+        mdd_trough_date = dd["trough"],
+        mdd_recovery_date = dd["recovery"],
+        sharpe          = sharpe,
+        sortino         = sortino,
+        calmar          = calmar,
+    )
+
+
+# ── 相關性矩陣 ────────────────────────────────────────────────────────────────
+def calc_correlation_matrix(closes: "dict[str, pd.Series]") -> pd.DataFrame:
+    """計算多檔標的月報酬相關係數矩陣。
+
+    - 以月底收盤對齊，取 pct_change
+    - 以共同可觀察期間計算（inner join）
+    回傳 DataFrame(index=代號, columns=代號)。
+    """
+    if len(closes) < 2:
+        return pd.DataFrame()
+    monthly_rets = {}
+    for sid, close in closes.items():
+        clean = close.replace(0, float("nan")).dropna()
+        m = clean.resample("ME").last().dropna()
+        monthly_rets[sid] = m.pct_change().dropna()
+    df = pd.DataFrame(monthly_rets).dropna()
+    if df.empty:
+        return pd.DataFrame()
+    return df.corr()
+
+
+# ── 退休反推：由月支出反推資產 ────────────────────────────────────────────────
+def calc_target_assets_from_expense(
+    monthly_expense: float,
+    safe_withdrawal_rate: float,     # 小數，例如 0.04
+) -> float:
+    """給定月支出與安全提領率，回傳退休起始所需資產。
+
+    formula: assets = annual_expense / SWR
+    """
+    if safe_withdrawal_rate <= 0:
+        return 0.0
+    return monthly_expense * 12 / safe_withdrawal_rate
+
+
 def simulate_gk_montecarlo(
     initial_portfolio: float,
     initial_rate:      float,
@@ -528,15 +776,35 @@ def simulate_gk_montecarlo(
     years:             int,
     n_sims:            int  = 1000,
     seed:              int  = 42,
+    dist_kind:         str  = "normal",      # "normal" | "tdist" | "bootstrap"
+    hist_monthly_returns: "np.ndarray | None" = None,  # bootstrap 需要
+    t_df:              int  = 5,              # Student-t 自由度
 ) -> dict:
     """
     Monte Carlo Guyton-Klinger 模擬。
     回傳各年度資產餘額、月提領額的百分位數，以及存活率。
+
+    dist_kind:
+      - "normal":    常態 N(μ, σ)（預設）
+      - "tdist":     Student-t 肥尾（df=t_df,縮放至 σ）
+      - "bootstrap": 從 hist_monthly_returns 月報酬有放回抽樣,每 12 個複利為年報酬
     """
     rng = np.random.default_rng(seed)
 
-    # 預先產生所有隨機報酬序列，方便事後取代表性路徑
-    ret_mat  = rng.normal(annual_return, annual_volatility, size=(n_sims, years))
+    # 根據 dist_kind 產生報酬矩陣
+    if dist_kind == "tdist":
+        # 標準 t 的變異數為 df/(df-2),需縮放到目標 σ
+        raw = rng.standard_t(t_df, size=(n_sims, years))
+        scale = annual_volatility / np.sqrt(t_df / max(t_df - 2, 1e-6))
+        ret_mat = annual_return + raw * scale
+    elif dist_kind == "bootstrap" and hist_monthly_returns is not None and len(hist_monthly_returns) >= 12:
+        arr = np.asarray(hist_monthly_returns, dtype=float)
+        arr = arr[~np.isnan(arr)]
+        # 有放回抽樣 12 筆 → 複利為年報酬
+        samples = rng.choice(arr, size=(n_sims, years, 12), replace=True)
+        ret_mat = np.prod(1.0 + samples, axis=2) - 1.0
+    else:
+        ret_mat = rng.normal(annual_return, annual_volatility, size=(n_sims, years))
 
     port_mat = np.zeros((n_sims, years))
     wd_mat   = np.zeros((n_sims, years))   # 月提領額

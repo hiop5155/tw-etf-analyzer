@@ -4,3 +4,8 @@ __pycache__/
 *.pyc
 *.stackdump
 .claude/
+.venv/                                                                                              
+.codex/
+stock_cache/                                                     
+*.stackdump                                                                                          
+fonts/NotoSansCJK*.otf 
