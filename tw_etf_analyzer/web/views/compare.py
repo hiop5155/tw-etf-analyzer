@@ -19,6 +19,13 @@ def render(ctx: AppContext) -> None:
     st.subheader("📊 多檔績效比較")
     st.caption("選 2～5 檔股票／ETF，以上市最晚的日期為共同起點比較報酬")
 
+    monthly_dca = int(st.number_input(
+        "比較用每月定期定額（TWD）",
+        min_value=1000,
+        step=1000,
+        key="_w_cmp_dca",
+    ))
+
     cols = st.columns(5)
     inputs = [
         cols[i].text_input(f"代號 {i+1}", key=f"_w_cmp_{i}", placeholder="例如 0050")
@@ -46,7 +53,7 @@ def render(ctx: AppContext) -> None:
         return
 
     try:
-        records = calc_multi_compare(closes, ctx.monthly_dca)
+        records = calc_multi_compare(closes, monthly_dca)
     except Exception as e:
         st.error(f"比較計算失敗:{e}")
         return
@@ -102,7 +109,7 @@ def render(ctx: AppContext) -> None:
             "Sortino":      round(risk_map[r.stock_id].sortino, 2)   if r.stock_id in risk_map else 0.0,
             "Calmar":       round(risk_map[r.stock_id].calmar,  2)   if r.stock_id in risk_map else 0.0,
             "淨CAGR%":      round(ctx.display_cagr_pct((r.cagr_pct / 100 - tax_drag_map.get(r.stock_id, 0.0)) * 100), 2),
-            f"DCA終值(月投{ctx.monthly_dca:,.0f})":
+            f"DCA終值(月投{monthly_dca:,.0f})":
                 f"{ctx.display_value(r.dca_final * ((1 - tax_drag_map.get(r.stock_id, 0.0)) ** years_cmp if ctx.tax_cfg.enabled else 1.0), years_cmp):,.0f}",
             "DCA年化%":     f"{ctx.display_cagr_pct(r.dca_cagr_pct - tax_drag_map.get(r.stock_id, 0.0) * 100):.2f}",
         }

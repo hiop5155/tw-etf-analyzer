@@ -15,9 +15,6 @@ from tw_etf_analyzer.web.display import nominal_to_real_cagr, nominal_to_real_va
 @dataclass
 class AppContext:
     token:       str
-    stock_id:    str
-    monthly_dca: int
-    close_full:  pd.Series
     tax_cfg:     TaxFeeConfig
     is_real:     bool       # 顯示模式 True=實質 / False=名目
     inflation:   float      # 小數;is_real 時才有意義

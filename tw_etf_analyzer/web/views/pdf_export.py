@@ -33,6 +33,24 @@ _PDF_DEFAULTS = {
 }
 
 
+def _pdf_primary_label() -> str:
+    for key in ("_w_perf_sid", "_w_target_sid", "_w_div_sid"):
+        val = str(st.session_state.get(key, "")).strip().upper().removesuffix(".TW")
+        if val:
+            return val
+    return "多主題"
+
+
+def _load_close_or_none(stock_id: str, token: str) -> pd.Series | None:
+    if not stock_id:
+        return None
+    try:
+        close, _ = cached_adjusted_close(stock_id, token)
+        return close
+    except Exception:
+        return None
+
+
 def render(ctx: AppContext) -> None:
     st.subheader("📄 PDF 報告匯出")
     st.caption("勾選要包含的分析區塊,產生繁中 PDF 報告(Noto Sans CJK TC 內嵌)。")
@@ -60,12 +78,14 @@ def render(ctx: AppContext) -> None:
         return
 
     with st.spinner("產生 PDF 中(圖表轉 PNG 可能需要 10-30 秒)..."):
+        primary_label = _pdf_primary_label()
         builder = PDFReportBuilder(
             title    = "台股績效分析報告",
-            subtitle = f"{ctx.stock_id} · 至 {pd.Timestamp.today().date()}",
+            subtitle = f"{primary_label} · 至 {pd.Timestamp.today().date()}",
             meta     = {
-                "股票代號": ctx.stock_id,
-                "每月定投": f"{ctx.monthly_dca:,.0f} TWD",
+                "績效分析標的": str(st.session_state.get("_w_perf_sid", "")).strip().upper(),
+                "績效分析月投": f"{int(st.session_state.get('_w_perf_dca', 10000)):,.0f} TWD",
+                "目標試算標的": str(st.session_state.get("_w_target_sid", "")).strip().upper(),
                 "稅費計算": "啟用" if ctx.tax_cfg.enabled else "未啟用",
                 "報酬模式": "實質" if ctx.is_real else "名目",
                 "產生日期": pd.Timestamp.today().strftime("%Y-%m-%d %H:%M"),
@@ -89,7 +109,7 @@ def render(ctx: AppContext) -> None:
 
         try:
             pdf_bytes = builder.build()
-            fname = f"tw-etf-report_{ctx.stock_id}_{pd.Timestamp.today().strftime('%Y%m%d')}.pdf"
+            fname = f"tw-etf-report_{primary_label}_{pd.Timestamp.today().strftime('%Y%m%d')}.pdf"
             st.success(f"✅ 已產生 PDF:{len(pdf_bytes):,} bytes({len(pdf_bytes)/1024:.0f} KB)")
             st.download_button(
                 label     = "⬇️ 下載 PDF 報告",
@@ -104,10 +124,17 @@ def render(ctx: AppContext) -> None:
 
 
 def _add_performance_section(builder: PDFReportBuilder, ctx: AppContext) -> None:
-    cmp_r = calc_comparison(ctx.close_full, ctx.monthly_dca)
+    stock_id = str(st.session_state.get("_w_perf_sid", "")).strip().upper().removesuffix(".TW")
+    monthly_dca = int(st.session_state.get("_w_perf_dca", 10000))
+    close_full = _load_close_or_none(stock_id, ctx.token)
+    if close_full is None:
+        builder.add_text("績效分析", "❗ 績效分析標的未設定或資料載入失敗")
+        return
+
+    cmp_r = calc_comparison(close_full, monthly_dca)
     lump_r, dca_r = cmp_r.lump, cmp_r.dca
-    rm = calc_risk_metrics(ctx.close_full)
-    builder.add_metrics(f"績效分析 — {ctx.stock_id} ({lump_r.years:.1f} 年)", [
+    rm = calc_risk_metrics(close_full)
+    builder.add_metrics(f"績效分析 — {stock_id} ({lump_r.years:.1f} 年)", [
         ("單筆總報酬",   f"{lump_r.total_return_pct:+,.1f}%"),
         ("單筆年化",     f"{ctx.display_cagr_pct(lump_r.cagr_pct):+.2f}%"),
         ("DCA 年化",     f"{ctx.display_cagr_pct(cmp_r.dca_cagr_pct):+.2f}%"),
@@ -131,22 +158,53 @@ def _add_performance_section(builder: PDFReportBuilder, ctx: AppContext) -> None
                               name="期末市值", mode="lines+markers"))
     fig.add_trace(go.Scatter(x=[r.year for r in dca_r.years], y=[r.cost_cum for r in dca_r.years],
                               name="累計投入", mode="lines+markers", line=dict(dash="dash")))
-    fig.update_layout(title=f"{ctx.stock_id} 期末市值 vs 累計投入",
+    fig.update_layout(title=f"{stock_id} 期末市值 vs 累計投入",
                        xaxis_title="年度", yaxis_title="TWD")
     builder.add_chart("績效走勢", fig)
 
 
 def _add_target_section(builder: PDFReportBuilder, ctx: AppContext) -> None:
-    lump_full = calc_lump_sum(ctx.close_full)
+    target_sid = str(st.session_state.get("_w_target_sid", "")).strip().upper().removesuffix(".TW")
+    close_full = _load_close_or_none(target_sid, ctx.token)
+    if close_full is None:
+        builder.add_text("目標試算", "❗ 目標試算標的未設定或資料載入失敗")
+        return
+
+    lump_full = calc_lump_sum(close_full)
     t_wan = st.session_state.get("_w_target_wan", 500)
     t_yrs = st.session_state.get("_w_target_years", 10)
-    t_exist = st.session_state.get("_w_existing", 0)
-    tr = calc_target_monthly(t_wan * 10_000, t_yrs, lump_full.cagr_pct, existing=t_exist * 10_000)
-    builder.add_metrics(f"目標試算 — {t_wan} 萬 / {t_yrs} 年 / CAGR {lump_full.cagr_pct:.2f}%", [
+    holdings = st.session_state.get("_w_holdings", [])
+    total_existing_twd = 0.0
+    total_existing_fv = 0.0
+    for row in holdings:
+        sid = str(row.get("stock_id", "")).strip().upper()
+        shares = int(row.get("shares", 0))
+        if not sid or shares <= 0:
+            continue
+        if sid == "現金":
+            latest_price = 1.0
+            cagr_pct = 0.0
+        else:
+            holding_close = _load_close_or_none(sid, ctx.token)
+            if holding_close is None:
+                continue
+            latest_price = float(holding_close.iloc[-1])
+            cagr_pct = calc_lump_sum(holding_close).cagr_pct
+        current_value = shares * latest_price
+        total_existing_twd += current_value
+        total_existing_fv += current_value * ((1 + cagr_pct / 100) ** t_yrs)
+
+    remaining = max(t_wan * 10_000 - total_existing_fv, 0.0)
+    tr = calc_target_monthly(remaining, t_yrs, lump_full.cagr_pct, existing=0.0)
+    terminal_value = total_existing_fv + remaining
+    total_gain = terminal_value - total_existing_twd - tr["total_invested"]
+    builder.add_metrics(f"目標試算 — {target_sid} / {t_wan} 萬 / {t_yrs} 年 / CAGR {lump_full.cagr_pct:.2f}%", [
         ("每月需投入",       f"{tr['monthly']:,.0f} TWD"),
         ("一次性投入等效",   f"{tr['lump_sum_today']:,.0f} TWD"),
+        ("現有持倉終值",     f"{total_existing_fv:,.0f} TWD"),
         ("新增投入本金",     f"{tr['total_invested']:,.0f} TWD"),
-        ("預估最終終值",     f"{tr['terminal_value']:,.0f} TWD"),
+        ("預估最終終值",     f"{terminal_value:,.0f} TWD"),
+        ("預計獲利",         f"{total_gain:,.0f} TWD"),
     ])
 
 
@@ -334,7 +392,8 @@ def _add_compare_section(builder: PDFReportBuilder, ctx: AppContext) -> None:
             pass
     if len(cmp_closes) < 2:
         return
-    cmp_records = calc_multi_compare(cmp_closes, ctx.monthly_dca)
+    cmp_monthly_dca = int(st.session_state.get("_w_cmp_dca", 10000))
+    cmp_records = calc_multi_compare(cmp_closes, cmp_monthly_dca)
     cmp_df = pd.DataFrame([{
         "代號":      r.stock_id,
         "共同起始":  str(r.common_start.date()),
@@ -352,12 +411,16 @@ def _add_compare_section(builder: PDFReportBuilder, ctx: AppContext) -> None:
 
 def _add_dividend_section(builder: PDFReportBuilder, ctx: AppContext) -> None:
     try:
-        div_df = cached_dividend_history(ctx.stock_id, ctx.token)
+        stock_id = str(st.session_state.get("_w_div_sid", "")).strip().upper().removesuffix(".TW")
+        if not stock_id:
+            builder.add_text("股利歷史", "❗ 股利歷史標的未設定")
+            return
+        div_df = cached_dividend_history(stock_id, ctx.token)
         if div_df.empty:
             builder.add_text("股利歷史", "無股利發放紀錄")
             return
         avg_y = div_df["yield_pct"].mean()
-        builder.add_metrics(f"股利歷史 — {ctx.stock_id}", [
+        builder.add_metrics(f"股利歷史 — {stock_id}", [
             ("發放次數",   f"{len(div_df)} 次"),
             ("平均殖利率", f"{avg_y:.2f}%"),
             ("累計配息",   f"{div_df['cash_dividend'].sum():.2f} TWD/股"),

@@ -9,14 +9,79 @@ import streamlit as st
 from tw_etf_analyzer.core.performance import (
     calc_lump_sum, calc_target_monthly, calc_target_assets_from_expense,
 )
+from tw_etf_analyzer.web.cache import cached_adjusted_close
 
 from tw_etf_analyzer.web.context import AppContext
 
 
-def render(ctx: AppContext) -> None:
-    lump_full = calc_lump_sum(ctx.close_full)
+def _normalize_holding(stock_id: object, shares: object) -> dict[str, int | str] | None:
+    sid = str(stock_id).strip().upper()
+    if not sid:
+        return None
 
+    try:
+        share_count = int(float(shares))
+    except (TypeError, ValueError):
+        return None
+
+    if share_count <= 0:
+        return None
+
+    return {"stock_id": sid, "shares": share_count}
+
+
+def _quote_holding(stock_id: str, token: str, fallback_cagr_pct: float) -> dict[str, float | str | None]:
+    if stock_id == "現金":
+        return {
+            "stock_id": stock_id,
+            "latest_price": 1.0,
+            "cagr_pct": 0.0,
+            "error": None,
+        }
+
+    try:
+        close_h, _ = cached_adjusted_close(stock_id, token)
+        latest_price = float(close_h.iloc[-1])
+        cagr_pct = calc_lump_sum(close_h).cagr_pct
+        return {
+            "stock_id": stock_id,
+            "latest_price": latest_price,
+            "cagr_pct": cagr_pct,
+            "error": None,
+        }
+    except Exception:
+        return {
+            "stock_id": stock_id,
+            "latest_price": None,
+            "cagr_pct": fallback_cagr_pct,
+            "error": "查價失敗",
+        }
+
+
+def _merge_holdings(rows: list[dict[str, int | str]]) -> list[dict[str, int | str]]:
+    merged: dict[str, int] = {}
+    for row in rows:
+        sid = str(row["stock_id"])
+        merged[sid] = merged.get(sid, 0) + int(row["shares"])
+    return [{"stock_id": sid, "shares": shares} for sid, shares in merged.items() if shares > 0]
+
+
+def _calc_required_monthly(target_twd: float, years: int, annual_cagr_pct: float, existing_fv: float) -> dict:
+    base = calc_target_monthly(max(target_twd - existing_fv, 0.0), years, annual_cagr_pct, existing=0.0)
+    terminal_value = existing_fv + max(target_twd - existing_fv, 0.0)
+    base["existing_fv"] = existing_fv
+    base["remaining"] = max(target_twd - existing_fv, 0.0)
+    base["terminal_value"] = terminal_value
+    return base
+
+
+def render(ctx: AppContext) -> None:
     st.subheader("🎯 目標試算")
+
+    target_stock_id = st.text_input(
+        "試算標的（不需要 .TW）",
+        key="_w_target_sid",
+    ).strip().upper().removesuffix(".TW")
 
     mode = st.radio(
         "試算模式",
@@ -25,23 +90,104 @@ def render(ctx: AppContext) -> None:
         key="_w_goal_mode",
     )
 
+    if not target_stock_id:
+        st.info("請輸入目標試算標的")
+        return
+
+    try:
+        target_close, _ = cached_adjusted_close(target_stock_id, ctx.token)
+    except Exception as exc:
+        st.error(str(exc))
+        return
+
+    lump_full = calc_lump_sum(target_close)
+
     if mode.startswith("📌"):
-        _forward_mode(ctx, lump_full)
+        _forward_mode(ctx, target_stock_id, lump_full)
     else:
         _reverse_mode(ctx)
 
 
-def _forward_mode(ctx: AppContext, lump_full) -> None:
-    st.caption(f"以 {ctx.stock_id} 歷史年化報酬 **{lump_full.cagr_pct:.2f}%** 為基準試算")
+def _forward_mode(ctx: AppContext, target_stock_id: str, lump_full) -> None:
+    st.caption(f"以 {target_stock_id} 歷史年化報酬 **{lump_full.cagr_pct:.2f}%** 為基準試算")
 
-    tc1, tc2, tc3 = st.columns(3)
-    target_wan   = tc1.number_input("目標金額（萬 TWD）",         min_value=1, step=100, key="_w_target_wan")
-    target_years = tc2.number_input("投資年限（年）",              min_value=1, max_value=50, step=1, key="_w_target_years")
-    existing_wan = tc3.number_input("目前已持有此標的（萬 TWD）", min_value=0, step=10,  key="_w_existing")
+    st.subheader("目前持股明細")
+    if "_w_holdings" not in st.session_state:
+        st.session_state["_w_holdings"] = []
 
-    target_twd   = target_wan   * 10_000
-    existing_twd = existing_wan * 10_000
-    base = calc_target_monthly(target_twd, target_years, lump_full.cagr_pct, existing=existing_twd)
+    holdings = st.session_state["_w_holdings"]
+    latest_prices: dict[str, float | None] = {}
+    holding_cagrs: dict[str, float] = {}
+    fv_details: list[str] = []
+    holdings_df = pd.DataFrame(holdings, columns=["stock_id", "shares"])
+
+    if not holdings_df.empty:
+        failed_quotes: list[str] = []
+        for sid in holdings_df["stock_id"].unique():
+            quote = _quote_holding(sid, ctx.token, lump_full.cagr_pct)
+            latest_prices[sid] = quote["latest_price"]
+            holding_cagrs[sid] = float(quote["cagr_pct"])
+            if quote["latest_price"] is None:
+                failed_quotes.append(sid)
+
+        holdings_df["最新價格"] = holdings_df["stock_id"].map(latest_prices)
+        holdings_df["年化報酬%"] = holdings_df["stock_id"].map(lambda sid: holding_cagrs.get(sid, lump_full.cagr_pct))
+        holdings_df["市值 (TWD)"] = holdings_df.apply(
+            lambda row: float(row["shares"]) * float(row["最新價格"])
+            if pd.notna(row["最新價格"]) else 0.0,
+            axis=1,
+        )
+
+        edited = st.data_editor(
+            holdings_df,
+            column_config={
+                "stock_id": st.column_config.TextColumn("股票代號"),
+                "shares": st.column_config.NumberColumn("股數", min_value=0, step=1, format="%d"),
+                "最新價格": st.column_config.NumberColumn("最新價格 (TWD)", format="%.2f", disabled=True),
+                "年化報酬%": st.column_config.NumberColumn("歷史年化報酬 %", format="%.2f", disabled=True),
+                "市值 (TWD)": st.column_config.NumberColumn("市值 (TWD)", format="%,.0f", disabled=True),
+            },
+            hide_index=True,
+            num_rows="dynamic",
+            key="_w_holdings_editor",
+        )
+
+        normalized_holdings = []
+        for _, row in edited.iterrows():
+            normalized = _normalize_holding(row["stock_id"], row["shares"])
+            if normalized is not None:
+                normalized_holdings.append(normalized)
+        normalized_holdings = _merge_holdings(normalized_holdings)
+
+        if normalized_holdings != holdings:
+            st.session_state["_w_holdings"] = normalized_holdings
+            st.rerun()
+
+        existing_twd = float(holdings_df["市值 (TWD)"].sum())
+        if failed_quotes:
+            st.warning(f"以下代號目前查不到價格，市值先以 0 計：{', '.join(failed_quotes)}")
+    else:
+        existing_twd = 0.0
+
+    tc1, tc2 = st.columns(2)
+    with tc1:
+        target_wan = st.number_input("目標金額（萬 TWD）", min_value=1, step=100, key="_w_target_wan")
+    with tc2:
+        target_years = st.number_input("投資年限（年）", min_value=1, max_value=50, step=1, key="_w_target_years")
+
+    target_twd = target_wan * 10_000
+    total_existing_fv = 0.0
+    if holdings:
+        for holding in holdings:
+            sid = str(holding["stock_id"])
+            current_value = float(holding["shares"]) * float(latest_prices.get(sid) or 0.0)
+            cagr_pct = holding_cagrs.get(sid, lump_full.cagr_pct)
+            future_value = current_value * ((1 + cagr_pct / 100) ** target_years)
+            total_existing_fv += future_value
+            fv_details.append(f"{sid}: {future_value:,.0f} TWD")
+
+    base = _calc_required_monthly(target_twd, target_years, lump_full.cagr_pct, total_existing_fv)
+    base["total_gain"] = base["terminal_value"] - existing_twd - base["total_invested"]
 
     _yrs2 = target_years
     disp_exist_fv = ctx.display_value(base["existing_fv"], _yrs2)
@@ -67,13 +213,26 @@ def _forward_mode(ctx: AppContext, lump_full) -> None:
             f"預計獲利{sfx}：{disp_gain:,.0f} TWD"
         )
 
+    if fv_details:
+        with st.expander("📊 各持倉屆時終值明細"):
+            for d in fv_details:
+                st.caption(d)
+
     st.divider()
     st.subheader("敏感度分析（不同報酬情境）")
     scenarios = [0.5, 0.75, 1.0, 1.25, 1.5]
     scenario_rows = []
     for mult in scenarios:
         rate = lump_full.cagr_pct * mult
-        res = calc_target_monthly(target_twd, target_years, rate, existing=existing_twd)
+        scenario_existing_fv = 0.0
+        for holding in holdings:
+            sid = str(holding["stock_id"])
+            current_value = float(holding["shares"]) * float(latest_prices.get(sid) or 0.0)
+            scaled_cagr_pct = holding_cagrs.get(sid, lump_full.cagr_pct) * mult
+            scenario_existing_fv += current_value * ((1 + scaled_cagr_pct / 100) ** target_years)
+
+        res = _calc_required_monthly(target_twd, target_years, rate, scenario_existing_fv)
+        res["total_gain"] = res["terminal_value"] - existing_twd - res["total_invested"]
         scenario_rows.append({
             "情境":            f"{mult*100:.0f}% 歷史報酬",
             "假設年化報酬%":   f"{rate:.2f}",

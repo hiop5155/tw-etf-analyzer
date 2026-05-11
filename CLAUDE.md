@@ -82,15 +82,29 @@ Streamlit Secrets → `PROJECT_ROOT/.env` → 環境變數 `FINMIND_TOKEN`
 - 所有使用者設定打包為單一 JSON 存入 `localStorage["etf_all"]`
 - 頁面載入時 async 讀取(第二次 render 才拿到值)
 - 用 `_ls_applied` 旗標防止 render-1 預設值蓋掉已存值
+- 目前已保存的分頁專屬欄位包含:績效分析標的/定投、目標試算標的/持股明細、多檔比較定投/代號、股利歷史標的
 
 ## 設計慣例
 
 **路徑**:絕不使用 `Path(__file__).parent`(package 化會指到 site-packages)。
 所有路徑從 `tw_etf_analyzer.config` 取,以 `cwd` 或 `TWETF_ROOT` 環境變數為基準。
 
-**AppContext**:每個 view 的 `render(ctx: AppContext)` 透過 dataclass 接收
-token / stock_id / close_full / tax_cfg / is_real / inflation。
-不直接讀 `st.session_state` 的全域狀態(僅讀 widget key 的本地輸入)。
+**AppContext**:每個 view 的 `render(ctx: AppContext)` 只透過 dataclass 接收
+token / tax_cfg / is_real / inflation。
+股票代號、定期定額、分頁專屬輸入改由各 view 自己管理,避免跨分頁共享狀態造成耦合。
+
+**分頁輸入隔離**:
+- `performance.py` 使用 `_w_perf_sid` / `_w_perf_dca`
+- `target.py` 使用 `_w_target_sid` / `_w_holdings`
+- `compare.py` 使用 `_w_cmp_0`~`_w_cmp_4` / `_w_cmp_dca`
+- `dividend.py` 使用 `_w_div_sid`
+- `pdf_export.py` 從各分頁自己的 session_state 取值,不再依賴單一全域標的
+
+**目標試算持股表**:
+- `目前持股明細` 僅保留 `st.data_editor`
+- 使用者直接在表格內新增/刪除/修改 `股票代號` 與 `股數`
+- `最新價格` / `市值` / `歷史年化報酬 %` 由代號自動查詢並設為唯讀
+- 若代號變更或股數變更,會自動 rerun 重抓價格並重算市值與終值
 
 **數字格式化**:Streamlit Arrow renderer 不保證 `Styler.format()` 對小數有效。
 需要控制小數位的欄位直接在 DataFrame 建立時預格式化為字串(`f"{v:.2f}"`);

@@ -13,9 +13,6 @@ import streamlit as st
 from streamlit_local_storage import LocalStorage
 
 from tw_etf_analyzer.config import load_token
-from tw_etf_analyzer.core.data import fetch_adjusted_close
-
-from tw_etf_analyzer.web.cache import cached_adjusted_close, clear_all_caches
 from tw_etf_analyzer.web.context import AppContext
 from tw_etf_analyzer.web.sidebar import render_mode_chips, render_sidebar
 from tw_etf_analyzer.web.storage import init_session_state_and_load, persist
@@ -47,38 +44,9 @@ init_session_state_and_load(_ls)
 _tax_cfg, _is_real, _inf_rate = render_sidebar()
 render_mode_chips(_tax_cfg, _is_real, _inf_rate)
 
-# ── 全域輸入(所有 tab 共用) ─────────────────────────────────────────────────
-c1, c2, c3 = st.columns([2, 2, 1])
-stock_id    = c1.text_input("股票代號（不需要 .TW）",
-                             key="_w_sid").upper().removesuffix(".TW")
-monthly_dca = c2.number_input("每月定期定額（TWD）", min_value=1000,
-                               step=1000, key="_w_dca")
-c3.write(""); c3.write("")
-refresh = c3.button("🔄 重新下載", width="stretch")
-
-st.divider()
-
-if not stock_id:
-    st.info("請輸入股票代號")
-    st.stop()
-
-# ── 載入完整資料(所有 view 共用) ────────────────────────────────────────────
-with st.spinner(f"載入 {stock_id} 資料..."):
-    try:
-        if refresh:
-            clear_all_caches()
-            close_full, _ = fetch_adjusted_close(stock_id, token, force=True)
-        else:
-            close_full, _ = cached_adjusted_close(stock_id, token)
-    except Exception as e:
-        st.error(str(e)); st.stop()
-
 # ── 共用 Context(傳給各 view) ──────────────────────────────────────────────
 ctx = AppContext(
     token       = token,
-    stock_id    = stock_id,
-    monthly_dca = int(monthly_dca),
-    close_full  = close_full,
     tax_cfg     = _tax_cfg,
     is_real     = _is_real,
     inflation   = _inf_rate,
@@ -101,4 +69,4 @@ with tab6:        view_dividend.render(ctx)
 with tab_pdf:     view_pdf_export.render(ctx)
 
 # ── 寫入 localStorage ─────────────────────────────────────────────────────────
-persist(_ls, stock_id, monthly_dca)
+persist(_ls)

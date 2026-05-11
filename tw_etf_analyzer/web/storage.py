@@ -23,8 +23,8 @@ _STORAGE_KEY = "etf_all"
 
 # ── 預設值(種子 session_state) ───────────────────────────────────────────────
 _DEFAULTS: dict = {
-    "_w_sid":        "0050",
-    "_w_dca":        10000,
+    "_w_perf_sid":   "0050",
+    "_w_perf_dca":   10000,
     "_w_rasset":     2000,
     "_w_ryears":     30,
     "_w_rinf":       2.0,
@@ -32,12 +32,18 @@ _DEFAULTS: dict = {
     "_w_rguard":     20.0,
     "preset_choice": "保守配息型（預設）",
     # 目標試算
+    "_w_target_sid":    "0050",
     "_w_target_wan":   500,
     "_w_target_years": 10,
     "_w_existing":     0,
+    # 持股明細
+    "_w_holdings":     [],   # list of dict: {"stock_id": str, "shares": int}
     # 多檔比較
+    "_w_cmp_dca":      10000,
     "_w_cmp_0": "", "_w_cmp_1": "", "_w_cmp_2": "",
     "_w_cmp_3": "", "_w_cmp_4": "",
+    # 股利歷史
+    "_w_div_sid":      "0050",
     # 提領追蹤
     "_w_tk6_port":  2000,
     "_w_tk6_rate":  4.0,
@@ -55,22 +61,26 @@ _DEFAULTS: dict = {
 
 # ── session_state key ↔ localStorage key 映射 ─────────────────────────────────
 _FIELD_MAP: dict[str, tuple[type, str]] = {
-    "_w_sid":          (str,   "sid"),
-    "_w_dca":          (int,   "dca"),
+    "_w_perf_sid":     (str,   "perf_sid"),
+    "_w_perf_dca":     (int,   "perf_dca"),
     "_w_rasset":       (int,   "r_asset"),
     "_w_ryears":       (int,   "r_years"),
     "_w_rinf":         (float, "r_inf"),
     "_w_rrate":        (float, "r_rate"),
     "_w_rguard":       (float, "r_guard"),
     "preset_choice":   (str,   "r_preset"),
+    "_w_target_sid":    (str,   "target_sid"),
     "_w_target_wan":   (int,   "target_wan"),
     "_w_target_years": (int,   "target_years"),
     "_w_existing":     (int,   "existing"),
+    "_w_holdings":     (list,  "holdings"),
+    "_w_cmp_dca":      (int,   "cmp_dca"),
     "_w_cmp_0":        (str,   "cmp_0"),
     "_w_cmp_1":        (str,   "cmp_1"),
     "_w_cmp_2":        (str,   "cmp_2"),
     "_w_cmp_3":        (str,   "cmp_3"),
     "_w_cmp_4":        (str,   "cmp_4"),
+    "_w_div_sid":      (str,   "div_sid"),
     "_w_tk6_port":     (int,   "tk6_port"),
     "_w_tk6_rate":     (float, "tk6_rate"),
     "_w_tk6_guard":    (int,   "tk6_guard"),
@@ -118,6 +128,21 @@ def init_session_state_and_load(ls) -> None:
                     st.session_state["_w_tk6_start"] = _date.fromisoformat(saved["tk6_start"])
                 except (ValueError, TypeError):
                     pass
+
+            # 持股明細
+            if "holdings" in saved and isinstance(saved["holdings"], list):
+                try:
+                    cleaned = []
+                    for item in saved["holdings"]:
+                        if isinstance(item, dict) and "stock_id" in item and "shares" in item:
+                            cleaned.append({
+                                "stock_id": str(item["stock_id"]).strip().upper(),
+                                "shares": int(item["shares"]),
+                            })
+                    st.session_state["_w_holdings"] = cleaned
+                except (ValueError, TypeError):
+                    pass
+
             # 陣列/複雜型別
             if "tk6_alloc" in saved and isinstance(saved["tk6_alloc"], list):
                 st.session_state["tk6_alloc_base"] = saved["tk6_alloc"]
@@ -139,28 +164,32 @@ def init_session_state_and_load(ls) -> None:
         st.session_state["_lsprev_etf_all"] = ""
 
 
-def persist(ls, stock_id: str, monthly_dca: int) -> None:
+def persist(ls) -> None:
     """把 session_state 的設定打包寫入 localStorage。
 
     只在 _ls_applied=True 後才寫,避免 render 1 的預設值蓋掉已存的值。
     """
     payload: dict = {
-        "sid":          stock_id,
-        "dca":          int(monthly_dca),
+        "perf_sid":     str(st.session_state.get("_w_perf_sid", "0050")).strip().upper(),
+        "perf_dca":     int(st.session_state.get("_w_perf_dca", 10000)),
         "r_asset":      int(st.session_state.get("_w_rasset", 1000)),
         "r_years":      int(st.session_state.get("_w_ryears", 30)),
         "r_inf":        float(st.session_state.get("_w_rinf", 2.0)),
         "r_rate":       float(st.session_state.get("_w_rrate", 6.0)),
         "r_guard":      float(st.session_state.get("_w_rguard", 20.0)),
         "r_preset":     str(st.session_state.get("preset_choice", "保守配息型（預設）")),
+        "target_sid":   str(st.session_state.get("_w_target_sid", "0050")).strip().upper(),
         "target_wan":   int(st.session_state.get("_w_target_wan", 500)),
         "target_years": int(st.session_state.get("_w_target_years", 10)),
         "existing":     int(st.session_state.get("_w_existing", 0)),
+        "holdings":     st.session_state.get("_w_holdings", []),
+        "cmp_dca":      int(st.session_state.get("_w_cmp_dca", 10000)),
         "cmp_0":        str(st.session_state.get("_w_cmp_0", "")),
         "cmp_1":        str(st.session_state.get("_w_cmp_1", "")),
         "cmp_2":        str(st.session_state.get("_w_cmp_2", "")),
         "cmp_3":        str(st.session_state.get("_w_cmp_3", "")),
         "cmp_4":        str(st.session_state.get("_w_cmp_4", "")),
+        "div_sid":      str(st.session_state.get("_w_div_sid", "0050")).strip().upper(),
         "tk6_port":     int(st.session_state.get("_w_tk6_port", 2000)),
         "tk6_rate":     float(st.session_state.get("_w_tk6_rate", 4.0)),
         "tk6_guard":    int(st.session_state.get("_w_tk6_guard", 20)),

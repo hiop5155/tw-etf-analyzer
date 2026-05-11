@@ -13,12 +13,41 @@ from tw_etf_analyzer.core.metrics import calc_risk_metrics
 from tw_etf_analyzer.core.performance import calc_comparison
 from tw_etf_analyzer.core.tax import avg_annual_dividend_yield, calc_tax_drag
 
-from tw_etf_analyzer.web.cache import cached_dividend_history
+from tw_etf_analyzer.web.cache import cached_adjusted_close, cached_dividend_history, clear_all_caches
 from tw_etf_analyzer.web.context import AppContext
 
 
 def render(ctx: AppContext) -> None:
-    close_full = ctx.close_full
+    st.subheader("📊 績效分析")
+
+    c1, c2, c3 = st.columns([2, 2, 1])
+    stock_id = c1.text_input(
+        "股票代號（不需要 .TW）",
+        key="_w_perf_sid",
+    ).strip().upper().removesuffix(".TW")
+    monthly_dca = int(c2.number_input(
+        "每月定期定額（TWD）",
+        min_value=1000,
+        step=1000,
+        key="_w_perf_dca",
+    ))
+    c3.write("")
+    c3.write("")
+    refresh = c3.button("🔄 重新下載", key="_w_perf_refresh", width="stretch")
+
+    if not stock_id:
+        st.info("請輸入股票代號")
+        return
+
+    with st.spinner(f"載入 {stock_id} 資料..."):
+        try:
+            if refresh:
+                clear_all_caches()
+            close_full, _ = cached_adjusted_close(stock_id, ctx.token)
+        except Exception as exc:
+            st.error(str(exc))
+            return
+
     min_date = close_full.index[0].date()
     max_date = close_full.index[-1].date()
 
@@ -28,7 +57,7 @@ def render(ctx: AppContext) -> None:
             value=min_date,
             min_value=min_date,
             max_value=max_date,
-            key=f"custom_start_date_{ctx.stock_id}",
+            key=f"custom_start_date_{stock_id}",
         )
         if custom_start > min_date:
             st.caption(f"上市日為 {min_date}，目前從 {custom_start} 開始分析")
@@ -38,7 +67,7 @@ def render(ctx: AppContext) -> None:
         st.error("所選起始日後資料不足，請選擇更早的日期")
         return
 
-    result = calc_comparison(close, ctx.monthly_dca)
+    result = calc_comparison(close, monthly_dca)
     lump   = result.lump
     dca    = result.dca
     f      = dca.final
@@ -49,7 +78,7 @@ def render(ctx: AppContext) -> None:
     tax_drag = 0.0
     if ctx.tax_cfg.enabled:
         try:
-            div_hist = cached_dividend_history(ctx.stock_id, ctx.token)
+            div_hist = cached_dividend_history(stock_id, ctx.token)
             div_yield = avg_annual_dividend_yield(div_hist, close)
             tax_drag = calc_tax_drag(div_yield, f.value, ctx.tax_cfg)
         except Exception:
@@ -57,7 +86,7 @@ def render(ctx: AppContext) -> None:
 
     sfx = ctx.real_sfx
     st.subheader(
-        f"{ctx.stock_id}　{lump.inception_date.date()} ～ {lump.last_date.date()}　({lump.years:.1f} 年)"
+        f"{stock_id}　{lump.inception_date.date()} ～ {lump.last_date.date()}　({lump.years:.1f} 年)"
     )
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("單筆總報酬",                   f"{lump.total_return_pct:+,.1f}%")
@@ -100,7 +129,7 @@ def render(ctx: AppContext) -> None:
                    help="股利稅 + 二代健保相對於總資產的年化拖累率(近似)")
 
     # 逐年績效表
-    st.subheader(f"定期定額每月 {ctx.monthly_dca:,.0f} TWD — 逐年績效")
+    st.subheader(f"定期定額每月 {monthly_dca:,.0f} TWD — 逐年績效")
     df = pd.DataFrame([{
         "年度":        r.year,
         "累計投入":    f"{r.cost_cum:,.0f}",
@@ -149,8 +178,8 @@ def render(ctx: AppContext) -> None:
     st.divider()
     st.subheader("下載結果")
 
-    excel_bytes = _build_excel(ctx.stock_id, ctx.monthly_dca, lump, result, df, cmp)
-    filename    = f"{ctx.stock_id}_績效分析_{lump.last_date.strftime('%Y%m%d')}.xlsx"
+    excel_bytes = _build_excel(stock_id, monthly_dca, lump, result, df, cmp)
+    filename    = f"{stock_id}_績效分析_{lump.last_date.strftime('%Y%m%d')}.xlsx"
 
     dl1, dl2 = st.columns(2)
     dl1.download_button(
@@ -164,7 +193,7 @@ def render(ctx: AppContext) -> None:
     dl2.download_button(
         label     = "⬇️ 下載 CSV（逐年績效）",
         data      = csv_bytes,
-        file_name = f"{ctx.stock_id}_逐年績效_{lump.last_date.strftime('%Y%m%d')}.csv",
+        file_name = f"{stock_id}_逐年績效_{lump.last_date.strftime('%Y%m%d')}.csv",
         mime      = "text/csv",
         width     = "stretch",
     )

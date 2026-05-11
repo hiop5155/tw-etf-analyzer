@@ -13,16 +13,24 @@ from tw_etf_analyzer.web.context import AppContext
 
 def render(ctx: AppContext) -> None:
     st.subheader("💰 股利發放歷史")
+    stock_id = st.text_input(
+        "股票代號（不需要 .TW）",
+        key="_w_div_sid",
+    ).strip().upper().removesuffix(".TW")
+
+    if not stock_id:
+        st.info("請輸入股票代號")
+        return
 
     with st.spinner("載入股利資料..."):
         try:
-            div_df = cached_dividend_history(ctx.stock_id, ctx.token)
+            div_df = cached_dividend_history(stock_id, ctx.token)
         except Exception as e:
             st.error(f"載入股利資料失敗:{e}")
-            st.stop()
+            return
 
     if div_df.empty:
-        st.info(f"{ctx.stock_id} 無股利發放記錄(可能為非配息型股票/ETF)")
+        st.info(f"{stock_id} 無股利發放記錄(可能為非配息型股票/ETF)")
         return
 
     avg_yield = div_df["yield_pct"].mean()
