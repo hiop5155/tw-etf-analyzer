@@ -120,9 +120,11 @@ def _forward_mode(ctx: AppContext, target_stock_id: str, lump_full) -> None:
     holding_cagrs: dict[str, float] = {}
     fv_details: list[str] = []
     holdings_df = pd.DataFrame(holdings, columns=["stock_id", "shares"])
+    if holdings_df.empty:
+        holdings_df = pd.DataFrame([{"stock_id": "", "shares": 0}]).iloc[0:0]
 
+    failed_quotes: list[str] = []
     if not holdings_df.empty:
-        failed_quotes: list[str] = []
         for sid in holdings_df["stock_id"].unique():
             quote = _quote_holding(sid, ctx.token, lump_full.cagr_pct)
             latest_prices[sid] = quote["latest_price"]
@@ -137,37 +139,39 @@ def _forward_mode(ctx: AppContext, target_stock_id: str, lump_full) -> None:
             if pd.notna(row["最新價格"]) else 0.0,
             axis=1,
         )
-
-        edited = st.data_editor(
-            holdings_df,
-            column_config={
-                "stock_id": st.column_config.TextColumn("股票代號"),
-                "shares": st.column_config.NumberColumn("股數", min_value=0, step=1, format="%d"),
-                "最新價格": st.column_config.NumberColumn("最新價格 (TWD)", format="%.2f", disabled=True),
-                "年化報酬%": st.column_config.NumberColumn("歷史年化報酬 %", format="%.2f", disabled=True),
-                "市值 (TWD)": st.column_config.NumberColumn("市值 (TWD)", format="%,.0f", disabled=True),
-            },
-            hide_index=True,
-            num_rows="dynamic",
-            key="_w_holdings_editor",
-        )
-
-        normalized_holdings = []
-        for _, row in edited.iterrows():
-            normalized = _normalize_holding(row["stock_id"], row["shares"])
-            if normalized is not None:
-                normalized_holdings.append(normalized)
-        normalized_holdings = _merge_holdings(normalized_holdings)
-
-        if normalized_holdings != holdings:
-            st.session_state["_w_holdings"] = normalized_holdings
-            st.rerun()
-
-        existing_twd = float(holdings_df["市值 (TWD)"].sum())
-        if failed_quotes:
-            st.warning(f"以下代號目前查不到價格，市值先以 0 計：{', '.join(failed_quotes)}")
     else:
-        existing_twd = 0.0
+        holdings_df["最新價格"] = pd.Series(dtype="float64")
+        holdings_df["年化報酬%"] = pd.Series(dtype="float64")
+        holdings_df["市值 (TWD)"] = pd.Series(dtype="float64")
+
+    edited = st.data_editor(
+        holdings_df,
+        column_config={
+            "stock_id": st.column_config.TextColumn("股票代號"),
+            "shares": st.column_config.NumberColumn("股數", min_value=0, step=1, format="%d"),
+            "最新價格": st.column_config.NumberColumn("最新價格 (TWD)", format="%.2f", disabled=True),
+            "年化報酬%": st.column_config.NumberColumn("歷史年化報酬 %", format="%.2f", disabled=True),
+            "市值 (TWD)": st.column_config.NumberColumn("市值 (TWD)", format="%,.0f", disabled=True),
+        },
+        hide_index=True,
+        num_rows="dynamic",
+        key="_w_holdings_editor",
+    )
+
+    normalized_holdings = []
+    for _, row in edited.iterrows():
+        normalized = _normalize_holding(row["stock_id"], row["shares"])
+        if normalized is not None:
+            normalized_holdings.append(normalized)
+    normalized_holdings = _merge_holdings(normalized_holdings)
+
+    if normalized_holdings != holdings:
+        st.session_state["_w_holdings"] = normalized_holdings
+        st.rerun()
+
+    existing_twd = float(holdings_df["市值 (TWD)"].sum()) if not holdings_df.empty else 0.0
+    if failed_quotes:
+        st.warning(f"以下代號目前查不到價格，市值先以 0 計：{', '.join(failed_quotes)}")
 
     tc1, tc2 = st.columns(2)
     with tc1:
