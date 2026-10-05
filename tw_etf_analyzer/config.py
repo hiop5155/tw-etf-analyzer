@@ -54,3 +54,16 @@ def load_token() -> str:
 
     # 3. 環境變數
     return os.environ.get("FINMIND_TOKEN", "")
+
+
+def get_money_tracker_url() -> str:
+    """取得 Money Tracker 主站網址 (支援 Streamlit Secrets 與環境變數覆寫)"""
+    try:
+        import streamlit as st
+        url = st.secrets.get("MONEY_TRACKER_URL", "")
+        if url:
+            return url.rstrip("/")
+    except Exception:
+        pass
+    return os.environ.get("MONEY_TRACKER_URL", "https://money-tracker-6f5.pages.dev").rstrip("/")
+

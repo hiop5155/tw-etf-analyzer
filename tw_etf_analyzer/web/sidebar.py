@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import streamlit as st
 
+from tw_etf_analyzer.config import get_money_tracker_url
 from tw_etf_analyzer.constants import DEFAULT_BUY_FEE_RATE, DEFAULT_SELL_FEE_RATE
 from tw_etf_analyzer.core.tax import TaxFeeConfig
 
@@ -29,6 +30,15 @@ def render_sidebar() -> tuple[TaxFeeConfig, bool, float]:
     st.session_state,此處不再重複傳 value=/index=(避免 Streamlit 發警告)。
     """
     with st.sidebar:
+        mt_url = get_money_tracker_url()
+        st.markdown("### 🧭 快速導覽")
+        col_nav1, col_nav2 = st.columns(2)
+        with col_nav1:
+            st.link_button("🏠 記帳助手", f"{mt_url}/", use_container_width=True)
+        with col_nav2:
+            st.link_button("📚 知識庫", f"{mt_url}/blog/", use_container_width=True)
+        st.divider()
+
         st.markdown("### ⚙️ 全域設定")
 
         # ── 稅費建模 ──────────────────────────────────────────────────────
