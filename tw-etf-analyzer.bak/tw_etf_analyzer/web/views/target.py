@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 import streamlit as st
 
@@ -36,17 +37,20 @@ def _quote_holding(stock_id: str, token: str, fallback_cagr_pct: float) -> dict[
             "stock_id": stock_id,
             "latest_price": 1.0,
             "cagr_pct": 0.0,
+            "history_years": None,
             "error": None,
         }
 
     try:
         close_h, _ = cached_adjusted_close(stock_id, token)
+        lump = calc_lump_sum(close_h)
         latest_price = float(close_h.iloc[-1])
-        cagr_pct = calc_lump_sum(close_h).cagr_pct
+        cagr_pct = lump.cagr_pct
         return {
             "stock_id": stock_id,
             "latest_price": latest_price,
             "cagr_pct": cagr_pct,
+            "history_years": lump.years,
             "error": None,
         }
     except Exception:
@@ -54,6 +58,7 @@ def _quote_holding(stock_id: str, token: str, fallback_cagr_pct: float) -> dict[
             "stock_id": stock_id,
             "latest_price": None,
             "cagr_pct": fallback_cagr_pct,
+            "history_years": None,
             "error": "查價失敗",
         }
 
@@ -64,6 +69,55 @@ def _merge_holdings(rows: list[dict[str, int | str]]) -> list[dict[str, int | st
         sid = str(row["stock_id"])
         merged[sid] = merged.get(sid, 0) + int(row["shares"])
     return [{"stock_id": sid, "shares": shares} for sid, shares in merged.items() if shares > 0]
+
+
+def _monthly_returns(close: pd.Series) -> pd.Series:
+    clean = close.replace(0, float("nan")).dropna()
+    return clean.resample("ME").last().dropna().pct_change().dropna()
+
+
+def _bootstrap_holdings_terminal(
+    holdings_values: dict[str, float],
+    closes_map: dict[str, pd.Series],
+    years: int,
+    n_sims: int = 2000,
+    seed: int = 42,
+) -> tuple[dict[int, float], dict[str, dict[int, float]], str | None]:
+    cash_value = holdings_values.get("現金", 0.0)
+    asset_codes = [sid for sid, value in holdings_values.items() if sid != "現金" and value > 0 and sid in closes_map]
+    if not asset_codes or years <= 0:
+        base = {10: cash_value, 25: cash_value, 50: cash_value, 90: cash_value}
+        return base, {"現金": base} if cash_value > 0 else {}, None
+
+    monthly = {sid: _monthly_returns(closes_map[sid]) for sid in asset_codes}
+    aligned = pd.DataFrame(monthly).dropna()
+    if aligned.empty:
+        base = {10: cash_value, 25: cash_value, 50: cash_value, 90: cash_value}
+        return base, {"現金": base} if cash_value > 0 else {}, None
+
+    rng = np.random.default_rng(seed)
+    months = years * 12
+    sampled_idx = rng.choice(len(aligned), size=(n_sims, months), replace=True)
+    sampled_returns = aligned.to_numpy()[sampled_idx]  # (n_sims, months, n_assets)
+    growth = np.prod(1.0 + sampled_returns, axis=1)    # (n_sims, n_assets)
+
+    per_asset_paths: dict[str, np.ndarray] = {}
+    total_paths = np.full(n_sims, cash_value, dtype=float)
+    for i, sid in enumerate(asset_codes):
+        final_vals = holdings_values[sid] * growth[:, i]
+        per_asset_paths[sid] = final_vals
+        total_paths += final_vals
+    if cash_value > 0:
+        per_asset_paths["現金"] = np.full(n_sims, cash_value, dtype=float)
+
+    percentiles = (10, 25, 50, 90)
+    total_pct = {p: float(np.percentile(total_paths, p)) for p in percentiles}
+    per_asset_pct = {
+        sid: {p: float(np.percentile(paths, p)) for p in percentiles}
+        for sid, paths in per_asset_paths.items()
+    }
+    period = f"{aligned.index[0].strftime('%Y-%m')} ～ {aligned.index[-1].strftime('%Y-%m')}"
+    return total_pct, per_asset_pct, period
 
 
 def _calc_required_monthly(target_twd: float, years: int, annual_cagr_pct: float, existing_fv: float) -> dict:
@@ -118,7 +172,7 @@ def _forward_mode(ctx: AppContext, target_stock_id: str, lump_full) -> None:
     holdings = st.session_state["_w_holdings"]
     latest_prices: dict[str, float | None] = {}
     holding_cagrs: dict[str, float] = {}
-    fv_details: list[str] = []
+    closes_map: dict[str, pd.Series] = {}
     holdings_df = pd.DataFrame(holdings, columns=["stock_id", "shares"])
     if holdings_df.empty:
         holdings_df = pd.DataFrame([{"stock_id": "", "shares": 0}]).iloc[0:0]
@@ -131,6 +185,12 @@ def _forward_mode(ctx: AppContext, target_stock_id: str, lump_full) -> None:
             holding_cagrs[sid] = float(quote["cagr_pct"])
             if quote["latest_price"] is None:
                 failed_quotes.append(sid)
+            elif sid != "現金":
+                try:
+                    close_h, _ = cached_adjusted_close(sid, ctx.token)
+                    closes_map[sid] = close_h
+                except Exception:
+                    pass
 
         holdings_df["最新價格"] = holdings_df["stock_id"].map(latest_prices)
         holdings_df["年化報酬%"] = holdings_df["stock_id"].map(lambda sid: holding_cagrs.get(sid, lump_full.cagr_pct))
@@ -180,16 +240,24 @@ def _forward_mode(ctx: AppContext, target_stock_id: str, lump_full) -> None:
         target_years = st.number_input("投資年限（年）", min_value=1, max_value=50, step=1, key="_w_target_years")
 
     target_twd = target_wan * 10_000
-    total_existing_fv = 0.0
+    holdings_values: dict[str, float] = {}
     if holdings:
         for holding in holdings:
             sid = str(holding["stock_id"])
             current_value = float(holding["shares"]) * float(latest_prices.get(sid) or 0.0)
-            cagr_pct = holding_cagrs.get(sid, lump_full.cagr_pct)
-            future_value = current_value * ((1 + cagr_pct / 100) ** target_years)
-            total_existing_fv += future_value
-            fv_details.append(f"{sid}: {future_value:,.0f} TWD")
+            holdings_values[sid] = holdings_values.get(sid, 0.0) + current_value
 
+    total_existing_pct = {10: 0.0, 25: 0.0, 50: 0.0, 90: 0.0}
+    per_asset_pct: dict[str, dict[int, float]] = {}
+    bootstrap_period = None
+    if holdings_values:
+        total_existing_pct, per_asset_pct, bootstrap_period = _bootstrap_holdings_terminal(
+            holdings_values,
+            closes_map,
+            target_years,
+        )
+
+    total_existing_fv = total_existing_pct[50]
     base = _calc_required_monthly(target_twd, target_years, lump_full.cagr_pct, total_existing_fv)
     base["total_gain"] = base["terminal_value"] - existing_twd - base["total_invested"]
 
@@ -202,10 +270,18 @@ def _forward_mode(ctx: AppContext, target_stock_id: str, lump_full) -> None:
     rc1, rc2, rc3 = st.columns(3)
     rc1.metric("每月需投入",       f"{base['monthly']:,.0f} TWD")
     rc2.metric("一次性投入等效",   f"{base['lump_sum_today']:,.0f} TWD")
-    rc3.metric(f"現有持倉屆時終值 {sfx}", f"{disp_exist_fv:,.0f} TWD")
+    rc3.metric(f"現有持倉屆時終值 P50 {sfx}", f"{disp_exist_fv:,.0f} TWD")
     rd1, rd2, rd3 = st.columns(3)
     rd1.metric("新增投入本金",                 f"{base['total_invested']:,.0f} TWD")
     rd2.metric(f"預估最終資產終值 {sfx}", f"{disp_terminal:,.0f} TWD")
+    if holdings_values:
+        p1, p2, p3, p4 = st.columns(4)
+        p1.metric(f"持倉終值 P10 {sfx}", f"{ctx.display_value(total_existing_pct[10], _yrs2):,.0f} TWD")
+        p2.metric(f"持倉終值 P25 {sfx}", f"{ctx.display_value(total_existing_pct[25], _yrs2):,.0f} TWD")
+        p3.metric(f"持倉終值 P50 {sfx}", f"{ctx.display_value(total_existing_pct[50], _yrs2):,.0f} TWD")
+        p4.metric(f"持倉終值 P90 {sfx}", f"{ctx.display_value(total_existing_pct[90], _yrs2):,.0f} TWD")
+        if bootstrap_period is not None:
+            st.caption(f"現有持倉終值分布使用共同歷史月報酬 bootstrap：{bootstrap_period}（{target_years} 年，2,000 路徑）")
 
     if base["monthly"] == 0:
         st.success(f"🎉 現有持倉預計 {target_years} 年後即可達標，不需額外定投！")
@@ -217,10 +293,16 @@ def _forward_mode(ctx: AppContext, target_stock_id: str, lump_full) -> None:
             f"預計獲利{sfx}：{disp_gain:,.0f} TWD"
         )
 
-    if fv_details:
+    if per_asset_pct:
         with st.expander("📊 各持倉屆時終值明細"):
-            for d in fv_details:
-                st.caption(d)
+            for sid, pct_map in per_asset_pct.items():
+                st.caption(
+                    f"{sid}: "
+                    f"P10 {ctx.display_value(pct_map[10], _yrs2):,.0f} / "
+                    f"P25 {ctx.display_value(pct_map[25], _yrs2):,.0f} / "
+                    f"P50 {ctx.display_value(pct_map[50], _yrs2):,.0f} / "
+                    f"P90 {ctx.display_value(pct_map[90], _yrs2):,.0f} TWD"
+                )
 
     st.divider()
     st.subheader("敏感度分析（不同報酬情境）")
@@ -228,14 +310,7 @@ def _forward_mode(ctx: AppContext, target_stock_id: str, lump_full) -> None:
     scenario_rows = []
     for mult in scenarios:
         rate = lump_full.cagr_pct * mult
-        scenario_existing_fv = 0.0
-        for holding in holdings:
-            sid = str(holding["stock_id"])
-            current_value = float(holding["shares"]) * float(latest_prices.get(sid) or 0.0)
-            scaled_cagr_pct = holding_cagrs.get(sid, lump_full.cagr_pct) * mult
-            scenario_existing_fv += current_value * ((1 + scaled_cagr_pct / 100) ** target_years)
-
-        res = _calc_required_monthly(target_twd, target_years, rate, scenario_existing_fv)
+        res = _calc_required_monthly(target_twd, target_years, rate, total_existing_pct[50])
         res["total_gain"] = res["terminal_value"] - existing_twd - res["total_invested"]
         scenario_rows.append({
             "情境":            f"{mult*100:.0f}% 歷史報酬",
