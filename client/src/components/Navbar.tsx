@@ -9,8 +9,10 @@ import {
   Coins,
   FileSpreadsheet,
   SlidersHorizontal,
+  ExternalLink,
 } from "lucide-react";
 import { TabKey, useApp } from "../context/AppContext";
+import { GoogleAuthButton } from "./GoogleAuthButton";
 
 interface NavbarProps {
   onOpenSettings: () => void;
@@ -58,6 +60,18 @@ export const Navbar: React.FC<NavbarProps> = ({ onOpenSettings }) => {
 
           {/* 右側快捷控制開關 */}
           <div className="flex items-center gap-2 sm:gap-3">
+            {/* 返回記帳助手 */}
+            <a
+              href="https://money-tracker.xyz"
+              className="px-2.5 py-1.5 rounded-lg text-xs font-medium text-slate-300 hover:text-white bg-slate-900 border border-slate-800 hover:border-slate-700 transition-colors hidden sm:flex items-center gap-1.5"
+            >
+              <span>💰 記帳助手</span>
+              <ExternalLink className="w-3 h-3 text-slate-400" />
+            </a>
+
+            {/* Google 登入與雲端同步 */}
+            <GoogleAuthButton />
+
             {/* 實質/名目快速切換鈕 */}
             <button
               onClick={() => setIsRealMode(!isRealMode)}
