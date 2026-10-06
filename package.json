@@ -1,0 +1,8 @@
+{
+  "name": "tw-etf-analyzer-root",
+  "private": true,
+  "scripts": {
+    "dev": "npm run dev --prefix client",
+    "build": "npm install --prefix client && npm run build --prefix client"
+  }
+}

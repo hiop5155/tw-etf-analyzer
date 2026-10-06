@@ -13,3 +13,8 @@ stock_cache/
 *.egg-info/
 build/
 dist/
+node_modules/
+client/node_modules/
+client/dist/
+.wrangler/
+mode_hierarchy.txt
