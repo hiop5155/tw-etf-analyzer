@@ -109,7 +109,24 @@ const LOCAL_STORAGE_USER_KEY = "user_profile";
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [activeTab, setActiveTab] = useState<TabKey>("performance");
+  const [activeTab, setActiveTab] = useState<TabKey>(() => {
+    try {
+      const urlParams = new URLSearchParams(window.location.search);
+      const tabParam = urlParams.get("tab") as TabKey;
+      const validTabs: TabKey[] = [
+        "performance",
+        "target",
+        "retirement",
+        "stress",
+        "tracking",
+        "compare",
+        "dividend",
+        "report",
+      ];
+      if (tabParam && validTabs.includes(tabParam)) return tabParam;
+    } catch {}
+    return "performance";
+  });
 
   // 使用者身分認證狀態 (支援跨子網域 SSO 共用 Cookie)
   const [token, setToken] = useState<string | null>(() => {
@@ -256,7 +273,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const lastSyncedJsonRef = useRef<string>("");
   const fetchedTokenRef = useRef<string | null>(null);
 
-  // 2. 當有 Token 時，從 D1 雲端抓取投組 (不重複 GET，且不顯示轉圈擾民，保持綠色)
+  // 2. 當有 Token 時，從 D1 雲端抓取投組
   const fetchCloudPortfolio = useCallback(async (authToken: string) => {
     try {
       const controller = new AbortController();

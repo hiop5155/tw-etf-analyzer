@@ -34,7 +34,10 @@ export function calcTargetMonthly(
   target: number,
   years: number,
   annualCagrPct: number,
-  existing: number = 0.0
+  existing: number = 0.0,
+  inflationRate: number = 0.0,
+  isRealMode: boolean = false,
+  existingCagrPct?: number
 ): {
   monthly: number;
   lump_sum_today: number;
@@ -43,26 +46,54 @@ export function calcTargetMonthly(
   remaining: number;
   total_gain: number;
   terminal_value: number;
+  effective_cagr: number;
+  effective_existing_cagr: number;
 } {
-  const rA = annualCagrPct / 100;
-  const rM = Math.pow(1 + rA, 1 / 12) - 1;
+  // 未來每月定期定額投入之實質/名目年化報酬率
+  const effectiveCagr =
+    isRealMode && inflationRate > -1
+      ? ((1 + annualCagrPct / 100) / (1 + inflationRate) - 1) * 100
+      : annualCagrPct;
+
+  // 現有資產持股組合之實質/名目加權年化報酬率 (若無則 fallback 至 effectiveCagr)
+  const baseExistingCagr =
+    existingCagrPct !== undefined && !isNaN(existingCagrPct)
+      ? existingCagrPct
+      : annualCagrPct;
+  const effectiveExistingCagr =
+    isRealMode && inflationRate > -1
+      ? ((1 + baseExistingCagr / 100) / (1 + inflationRate) - 1) * 100
+      : baseExistingCagr;
+
+  const rA_dca = effectiveCagr / 100;
+  const rM_dca = Math.pow(1 + rA_dca, 1 / 12) - 1;
   const n = years * 12;
 
-  const existingFv = rA > -1 ? existing * Math.pow(1 + rA, years) : existing;
+  const rA_exist = effectiveExistingCagr / 100;
+
+  // 現有資產依「持股組合加權年化」在 N 年後複利成長之終值 (FV)
+  const existingFv = rA_exist > -1 ? existing * Math.pow(1 + rA_exist, years) : existing;
+  // 扣除現有資產終值後，目標尚餘缺口
   const remaining = Math.max(target - existingFv, 0.0);
 
   let monthly = 0.0;
   if (remaining === 0) {
     monthly = 0.0;
-  } else if (rM > 0) {
-    monthly = (remaining * rM) / (Math.pow(1 + rM, n) - 1);
+  } else if (rM_dca > 0) {
+    // 期末定額年金公式: FV = PMT * ((1+rM)^n - 1) / rM => PMT = FV * rM / ((1+rM)^n - 1)
+    monthly = (remaining * rM_dca) / (Math.pow(1 + rM_dca, n) - 1);
   } else {
     monthly = n > 0 ? remaining / n : 0.0;
   }
 
   const totalInvested = monthly * n;
-  const lumpSum = Math.max(target / Math.pow(1 + rA, years) - existing, 0.0);
-  const terminalValue = existingFv + remaining;
+  // 若不定期定額，今天單筆補足所需金額 (折現現值扣除現有資產)
+  const lumpSum = Math.max(target / Math.pow(1 + rA_exist, years) - existing, 0.0);
+
+  // 期末總資產終值: 現有資產終值 + 定期定額累積終值
+  const dcaFv = rM_dca > 0 ? (monthly * (Math.pow(1 + rM_dca, n) - 1)) / rM_dca : totalInvested;
+  const terminalValue = existingFv + dcaFv;
+  const totalGain = terminalValue - existing - totalInvested;
 
   return {
     monthly: Math.round(monthly),
@@ -70,8 +101,10 @@ export function calcTargetMonthly(
     total_invested: Math.round(totalInvested),
     existing_fv: Math.round(existingFv),
     remaining: Math.round(remaining),
-    total_gain: Math.round(target - existing - totalInvested),
+    total_gain: Math.round(totalGain),
     terminal_value: Math.round(terminalValue),
+    effective_cagr: Math.round(effectiveCagr * 100) / 100,
+    effective_existing_cagr: Math.round(effectiveExistingCagr * 100) / 100,
   };
 }
 

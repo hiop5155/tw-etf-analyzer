@@ -161,10 +161,10 @@ export const StressTestView: React.FC = () => {
                   </div>
 
                   <div className="space-y-3 pt-3 border-t border-slate-800/80">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs text-slate-400">目前資產餘額:</span>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs text-slate-400 shrink-0">目前資產餘額:</span>
                       <span
-                        className={`font-mono font-bold text-lg ${
+                        className={`font-mono font-bold text-base sm:text-lg whitespace-nowrap ${
                           isGrowing ? "text-emerald-400" : "text-amber-400"
                         }`}
                       >
@@ -172,16 +172,18 @@ export const StressTestView: React.FC = () => {
                       </span>
                     </div>
 
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs text-slate-400">目前月提領額:</span>
-                      <span className="font-mono font-bold text-sm text-cyan-300">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs text-slate-400 shrink-0">目前月提領額:</span>
+                      <span className="font-mono font-bold text-xs sm:text-sm text-cyan-300 whitespace-nowrap">
                         NT$ {r.final_monthly_income.toLocaleString()}
                       </span>
                     </div>
 
                     <div className="flex items-center justify-between text-xs text-slate-500">
-                      <span>歷時年數:</span>
-                      <span className="font-mono text-slate-400">{yrs} 年 ({months} 個月)</span>
+                      <span className="shrink-0">歷時年數:</span>
+                      <span className="font-mono text-slate-400 whitespace-nowrap">
+                        {yrs} 年 ({months} 個月)
+                      </span>
                     </div>
 
                     {item.proxied.length > 0 && (

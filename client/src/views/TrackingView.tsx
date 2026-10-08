@@ -327,7 +327,7 @@ export const TrackingView: React.FC = () => {
                             ? "↑ 加10%"
                             : "通膨微調"}
                         </td>
-                        <td className="py-2.5 px-3 text-right font-bold text-white">
+                        <td className="py-2.5 px-3 text-right font-bold text-white whitespace-nowrap font-mono">
                           NT$ {rb.monthly_income.toLocaleString()}
                         </td>
                       </tr>

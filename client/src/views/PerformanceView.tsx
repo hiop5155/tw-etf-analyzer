@@ -521,15 +521,15 @@ export const PerformanceView: React.FC = () => {
                 <tbody className="divide-y divide-slate-800/60 text-slate-200">
                   {comparison.dca.years.map((y) => (
                     <tr key={y.year} className="hover:bg-slate-800/40 transition-colors">
-                      <td className="py-2.5 px-3 font-semibold text-white">{y.year}</td>
-                      <td className="py-2.5 px-3 text-right text-slate-400">
+                      <td className="py-2.5 px-3 font-semibold text-white whitespace-nowrap">{y.year}</td>
+                      <td className="py-2.5 px-3 text-right text-slate-400 whitespace-nowrap font-mono">
                         {y.cost_cum.toLocaleString()} 元
                       </td>
-                      <td className="py-2.5 px-3 text-right font-semibold text-cyan-300">
+                      <td className="py-2.5 px-3 text-right font-semibold text-cyan-300 whitespace-nowrap font-mono">
                         {y.value.toLocaleString()} 元
                       </td>
                       <td
-                        className={`py-2.5 px-3 text-right font-semibold ${
+                        className={`py-2.5 px-3 text-right font-semibold whitespace-nowrap font-mono ${
                           y.gain >= 0 ? "text-emerald-400" : "text-rose-400"
                         }`}
                       >
@@ -537,7 +537,7 @@ export const PerformanceView: React.FC = () => {
                         {y.gain.toLocaleString()} 元
                       </td>
                       <td
-                        className={`py-2.5 px-3 text-right font-bold ${
+                        className={`py-2.5 px-3 text-right font-bold whitespace-nowrap font-mono ${
                           y.return_pct >= 0 ? "text-emerald-400" : "text-rose-400"
                         }`}
                       >

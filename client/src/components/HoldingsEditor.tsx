@@ -11,7 +11,10 @@ interface QuoteData {
   cagr: number | null;
 }
 
-export const HoldingsEditor: React.FC<{ onApplyCagr?: (cagr: number) => void }> = ({ onApplyCagr }) => {
+export const HoldingsEditor: React.FC<{
+  onApplyCagr?: (cagr: number) => void;
+  onWeightedCagrChange?: (cagr: number) => void;
+}> = ({ onApplyCagr, onWeightedCagrChange }) => {
   const { userHoldings, setUserHoldings, setExistingAsset } = useApp();
 
   const [newStockId, setNewStockId] = useState("");
@@ -96,12 +99,15 @@ export const HoldingsEditor: React.FC<{ onApplyCagr?: (cagr: number) => void }> 
     };
   }, [userHoldings, quotes]);
 
-  // 當總市值算出時，自動更新 AppContext 中的 existingAsset (現有資產)
+  // 當總市值與加權年化算出時，自動更新 AppContext 中的 existingAsset 與回傳加權年化
   useEffect(() => {
     if (totalMarketValue > 0) {
       setExistingAsset(Math.round(totalMarketValue));
     }
-  }, [totalMarketValue, setExistingAsset]);
+    if (weightedCagr > 0 && onWeightedCagrChange) {
+      onWeightedCagrChange(weightedCagr);
+    }
+  }, [totalMarketValue, weightedCagr, setExistingAsset, onWeightedCagrChange]);
 
   // 修改股數
   const handleSharesChange = (index: number, shares: number) => {
@@ -151,11 +157,13 @@ export const HoldingsEditor: React.FC<{ onApplyCagr?: (cagr: number) => void }> 
 
       {/* 持股清單 */}
       <div className="space-y-2">
-        <div className="grid grid-cols-12 gap-2 text-xs font-medium text-slate-400 px-3 py-1">
-          <div className="col-span-3 sm:col-span-3">標的代號</div>
-          <div className="col-span-3 sm:col-span-3">持有股數 (股)</div>
-          <div className="col-span-3 sm:col-span-3 text-right">最新股價 / 市值</div>
-          <div className="col-span-3 sm:col-span-3 text-right">年化報酬 / 操作</div>
+        <div className="grid grid-cols-12 gap-2 text-xs font-medium text-slate-400 px-2.5 sm:px-3 py-1">
+          <div className="col-span-3 sm:col-span-3 min-w-0">標的代號</div>
+          <div className="col-span-3 sm:col-span-3 min-w-0">持有股數 (股)</div>
+          <div className="col-span-5 sm:col-span-4 min-w-0 text-right">最新股價 / 市值</div>
+          <div className="col-span-1 sm:col-span-2 text-right">
+            <span className="hidden sm:inline">年化 / </span>操作
+          </div>
         </div>
 
         {userHoldings.map((h, idx) => {
@@ -167,49 +175,56 @@ export const HoldingsEditor: React.FC<{ onApplyCagr?: (cagr: number) => void }> 
           return (
             <div
               key={`${h.stockId}-${idx}`}
-              className="grid grid-cols-12 gap-2 items-center bg-slate-900/80 border border-slate-800/80 hover:border-slate-700 p-2.5 rounded-xl transition-all"
+              className="grid grid-cols-12 gap-2 items-center bg-slate-900/80 border border-slate-800/80 hover:border-slate-700 p-2 sm:p-2.5 rounded-xl transition-all"
             >
               {/* 代號與名稱 */}
-              <div className="col-span-3 sm:col-span-3 flex flex-col">
-                <span className="font-mono font-bold text-white text-sm">{h.stockId}</span>
-                <span className="text-[11px] text-slate-400 truncate">{name}</span>
+              <div className="col-span-3 sm:col-span-3 flex flex-col min-w-0">
+                <span className="font-mono font-bold text-white text-xs sm:text-sm truncate">
+                  {h.stockId}
+                </span>
+                <span className="text-[10px] sm:text-[11px] text-slate-400 truncate" title={name}>
+                  {name}
+                </span>
               </div>
 
               {/* 股數輸入 */}
-              <div className="col-span-3 sm:col-span-3">
+              <div className="col-span-3 sm:col-span-3 min-w-0">
                 <NumericInput
                   value={h.shares}
                   min={0}
                   step={100}
                   onCommit={(val) => handleSharesChange(idx, val)}
                   placeholder="0"
-                  className="w-full bg-slate-950 border border-slate-700 px-2.5 py-1.5 rounded-lg text-sm font-mono font-semibold text-white focus:outline-none focus:border-indigo-500"
+                  className="w-full bg-slate-950 border border-slate-700 px-1.5 sm:px-2.5 py-1 sm:py-1.5 rounded-lg text-xs sm:text-sm font-mono font-semibold text-white text-center sm:text-left focus:outline-none focus:border-indigo-500"
                 />
               </div>
 
               {/* 價格與市值 */}
-              <div className="col-span-3 sm:col-span-3 flex flex-col items-end">
-                <span className="text-sm font-mono font-bold text-emerald-400">
+              <div className="col-span-5 sm:col-span-4 flex flex-col items-end min-w-0 text-right">
+                <span
+                  className="text-xs sm:text-sm font-mono font-bold text-emerald-400 whitespace-nowrap tracking-tight"
+                  title={`$${Math.round(val).toLocaleString()}`}
+                >
                   ${Math.round(val).toLocaleString()}
                 </span>
-                <span className="text-[11px] font-mono text-slate-500">
+                <span className="text-[10px] sm:text-[11px] font-mono text-slate-500 whitespace-nowrap">
                   {price !== null && price !== undefined ? `@ $${price.toFixed(2)}` : "載入中"}
                 </span>
               </div>
 
               {/* 年化報酬與刪除 */}
-              <div className="col-span-3 sm:col-span-3 flex items-center justify-end gap-2">
+              <div className="col-span-1 sm:col-span-2 flex items-center justify-end gap-1.5">
                 {q?.cagr !== null && q?.cagr !== undefined && (
-                  <span className="text-xs font-mono text-indigo-300 hidden sm:inline">
+                  <span className="text-xs font-mono text-indigo-300 hidden sm:inline whitespace-nowrap">
                     {q.cagr > 0 ? "+" : ""}{q.cagr.toFixed(1)}%
                   </span>
                 )}
                 <button
                   onClick={() => handleRemove(idx)}
-                  className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 transition-colors"
+                  className="p-1 sm:p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 transition-colors shrink-0"
                   title="刪除"
                 >
-                  <Trash2 className="w-4 h-4" />
+                  <Trash2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                 </button>
               </div>
             </div>
@@ -223,10 +238,10 @@ export const HoldingsEditor: React.FC<{ onApplyCagr?: (cagr: number) => void }> 
         <div className="flex items-center gap-2">
           <input
             type="text"
-            placeholder="代號 (如 0050, 現金)"
+            placeholder="代號 (如 0050)"
             value={newStockId}
             onChange={(e) => setNewStockId(e.target.value)}
-            className="w-36 bg-slate-900 border border-slate-700 px-3 py-1.5 rounded-xl text-xs font-mono text-white placeholder:text-slate-500 focus:outline-none focus:border-indigo-500"
+            className="flex-1 min-w-[80px] sm:w-36 bg-slate-900 border border-slate-700 px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-mono text-white placeholder:text-slate-500 focus:outline-none focus:border-indigo-500"
           />
           <input
             type="number"
@@ -234,11 +249,11 @@ export const HoldingsEditor: React.FC<{ onApplyCagr?: (cagr: number) => void }> 
             value={newShares}
             onChange={(e) => setNewShares(parseInt(e.target.value, 10) || 0)}
             onKeyDown={(e) => e.key === "Enter" && handleAdd()}
-            className="w-24 bg-slate-900 border border-slate-700 px-3 py-1.5 rounded-xl text-xs font-mono text-white focus:outline-none focus:border-indigo-500"
+            className="w-20 sm:w-24 bg-slate-900 border border-slate-700 px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-mono text-white focus:outline-none focus:border-indigo-500"
           />
           <button
             onClick={handleAdd}
-            className="px-3 py-1.5 rounded-xl text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 flex items-center gap-1 transition-colors"
+            className="shrink-0 px-3 py-1.5 rounded-xl text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 flex items-center gap-1 transition-colors"
           >
             <Plus className="w-3.5 h-3.5" />
             <span>新增</span>
@@ -246,15 +261,15 @@ export const HoldingsEditor: React.FC<{ onApplyCagr?: (cagr: number) => void }> 
         </div>
 
         {/* 總市值與加權報酬統計 */}
-        <div className="flex flex-wrap items-center gap-4 bg-slate-900/60 px-4 py-2 rounded-xl border border-slate-800">
-          <div className="flex items-center gap-1.5 text-xs font-mono">
+        <div className="flex flex-wrap items-center justify-between sm:justify-start gap-3 sm:gap-4 bg-slate-900/60 px-3 sm:px-4 py-2 rounded-xl border border-slate-800">
+          <div className="flex items-center gap-1.5 text-xs font-mono whitespace-nowrap">
             <span className="text-slate-400">目前持股總額:</span>
-            <span className="font-bold text-emerald-400 text-sm">
+            <span className="font-bold text-emerald-400 text-xs sm:text-sm">
               ${Math.round(totalMarketValue).toLocaleString()} 元
             </span>
           </div>
 
-          <div className="flex items-center gap-1.5 text-xs font-mono">
+          <div className="flex items-center gap-1.5 text-xs font-mono whitespace-nowrap">
             <span className="text-slate-400">加權年化:</span>
             <span className="font-bold text-indigo-400">
               {weightedCagr > 0 ? "+" : ""}{weightedCagr.toFixed(1)}%

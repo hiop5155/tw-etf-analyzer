@@ -8,6 +8,8 @@ import {
   ArrowRight,
   Calculator,
   PieChart as PieIcon,
+  Sparkles,
+  CheckCircle2,
 } from "lucide-react";
 import {
   ResponsiveContainer,
@@ -40,7 +42,8 @@ export const TargetView: React.FC = () => {
     isRealMode,
   } = useApp();
 
-  const [expectedCagr, setExpectedCagr] = useState<number>(8.0); // 預期年化報酬率 %
+  const [expectedCagr, setExpectedCagr] = useState<number>(8.0); // 未來定期定額預期年化報酬率 %
+  const [holdingsCagr, setHoldingsCagr] = useState<number>(8.0); // 目前已持有組合加權年化 %
   const [monthlyExpense, setMonthlyExpense] = useState<number>(60_000); // 預期月支出
   const [swr, setSwr] = useState<number>(4.0); // 提領率 %
 
@@ -50,59 +53,75 @@ export const TargetView: React.FC = () => {
     setTargetAmount(Math.round(assets));
   };
 
-  // 核心反推計算
+  // 核心反推計算 (包含實質購買力、現有資產持股組合專屬加權年化)
   const result = useMemo(() => {
     return calcTargetMonthly(
       targetAmount,
       targetYears,
       expectedCagr,
-      existingAsset
+      existingAsset,
+      inflationRate,
+      isRealMode,
+      holdingsCagr
     );
-  }, [targetAmount, targetYears, expectedCagr, existingAsset]);
+  }, [targetAmount, targetYears, expectedCagr, existingAsset, inflationRate, isRealMode, holdingsCagr]);
 
   // 生成逐年本金 vs 獲利階梯圖數據
   const trajectoryData = useMemo(() => {
-    const rA = expectedCagr / 100;
-    const rM = Math.pow(1 + rA, 1 / 12) - 1;
+    const rA_exist = result.effective_existing_cagr / 100;
+    const rM_exist = Math.pow(1 + rA_exist, 1 / 12) - 1;
+
+    const rA_dca = result.effective_cagr / 100;
+    const rM_dca = Math.pow(1 + rA_dca, 1 / 12) - 1;
     const monthly = result.monthly;
 
     const data: {
       year: number;
       principal: number;
-      fv: number;
+      existingFv: number;
+      totalValue: number;
       gain: number;
     }[] = [];
 
-    let currentVal = existingAsset;
-    let totalPrincipal = existingAsset;
+    let currentExisting = existingAsset;
+    let currentDca = 0;
+    let totalDcaPrincipal = 0;
 
     data.push({
       year: 0,
-      principal: Math.round(totalPrincipal / 10000),
-      fv: Math.round(currentVal / 10000),
+      principal: Math.round(existingAsset / 10000),
+      existingFv: Math.round(existingAsset / 10000),
+      totalValue: Math.round(existingAsset / 10000),
       gain: 0,
     });
 
     for (let yr = 1; yr <= targetYears; yr++) {
       for (let m = 0; m < 12; m++) {
-        currentVal = (currentVal + monthly) * (1 + rM);
-        totalPrincipal += monthly;
+        // 現有資產依「持股組合加權年化」月複利成長
+        currentExisting = currentExisting * (1 + rM_exist);
+        // 定期定額每期先計息再存入 (期末年金，精確對齊公式)
+        currentDca = currentDca * (1 + rM_dca) + monthly;
+        totalDcaPrincipal += monthly;
       }
-      const gain = Math.max(0, currentVal - totalPrincipal);
+      const totalVal = currentExisting + currentDca;
+      const totalCost = existingAsset + totalDcaPrincipal;
+      const gain = Math.max(0, totalVal - totalCost);
+
       data.push({
         year: yr,
-        principal: Math.round(totalPrincipal / 10000),
-        fv: Math.round(currentVal / 10000),
+        principal: Math.round(totalCost / 10000),
+        existingFv: Math.round(currentExisting / 10000),
+        totalValue: Math.round(totalVal / 10000),
         gain: Math.round(gain / 10000),
       });
     }
 
     return data;
-  }, [expectedCagr, targetYears, result.monthly, existingAsset]);
+  }, [result.effective_existing_cagr, result.effective_cagr, result.monthly, targetYears, existingAsset]);
 
   const gainRatio =
-    targetAmount > 0
-      ? Math.round((result.total_gain / targetAmount) * 100)
+    result.terminal_value > 0
+      ? Math.round((result.total_gain / result.terminal_value) * 100)
       : 0;
 
   return (
@@ -120,7 +139,10 @@ export const TargetView: React.FC = () => {
       </div>
 
       {/* 目前持股明細編輯區 (自動計算現有資產與年化報酬) */}
-      <HoldingsEditor onApplyCagr={(c) => setExpectedCagr(c)} />
+      <HoldingsEditor
+        onApplyCagr={(c) => setExpectedCagr(c)}
+        onWeightedCagrChange={(c) => setHoldingsCagr(c)}
+      />
 
       {/* 輸入控制面板 */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -306,26 +328,93 @@ export const TargetView: React.FC = () => {
         </div>
       </div>
 
+      {/* 目標達成路徑拆解橫幅 (清晰透明展示：現有資產終值 vs 剩餘目標定額) */}
+      <div className="glass-panel rounded-2xl p-4 sm:p-5 border border-indigo-500/25 bg-gradient-to-r from-indigo-950/40 via-slate-900/80 to-slate-950/90 space-y-3">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                公式透明解析
+              </span>
+              <h3 className="text-sm font-bold text-white flex items-center gap-1.5">
+                目標資產路徑拆解（先將現有資產算終值，再推算差額定投）
+              </h3>
+            </div>
+            <p className="text-xs text-slate-400 leading-relaxed">
+              系統已將您現有的 <span className="text-white font-mono font-semibold">NT$ {(existingAsset / 10000).toLocaleString(undefined, { maximumFractionDigits: 1 })} 萬</span> 市值，
+              以持股組合加權年化 <span className="text-indigo-300 font-mono font-bold">{result.effective_existing_cagr.toFixed(1)}%</span>
+              {isRealMode && <span className="text-cyan-300">（實質購買力已扣通膨）</span>}
+              複利成長 {targetYears} 年，
+              預估屆時終值為 <span className="text-emerald-400 font-mono font-bold">NT$ {(result.existing_fv / 10000).toLocaleString(undefined, { maximumFractionDigits: 1 })} 萬</span>。
+              {result.remaining > 0 && (
+                <span className="text-slate-400 ml-1">
+                  扣除終值後尚需補足 <strong className="text-amber-400 font-mono">NT$ {(result.remaining / 10000).toLocaleString(undefined, { maximumFractionDigits: 1 })} 萬</strong>，以定期定額預期年化 <strong className="text-indigo-300 font-mono">{result.effective_cagr.toFixed(1)}%</strong> 倒推每月定投額度。
+                </span>
+              )}
+            </p>
+          </div>
+
+          {result.remaining === 0 ? (
+            <div className="p-3 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs flex items-center gap-2 shrink-0">
+              <Sparkles className="w-4 h-4 shrink-0 text-emerald-400" />
+              <span>
+                🎉 現有持股終值已超越目標（{Math.round(result.existing_fv / 10000)}萬 ≥ {Math.round(targetAmount / 10000)}萬），無需再定投！
+              </span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-3 bg-slate-900/90 px-3.5 py-2.5 rounded-xl border border-slate-800 shrink-0 text-xs font-mono">
+              <div>
+                <span className="text-slate-400 block text-[11px]">扣除終值後缺口</span>
+                <span className="text-amber-400 font-bold text-sm">
+                  NT$ {(result.remaining / 10000).toLocaleString(undefined, { maximumFractionDigits: 1 })} 萬
+                </span>
+              </div>
+              <ArrowRight className="w-3.5 h-3.5 text-slate-600" />
+              <div>
+                <span className="text-slate-400 block text-[11px]">每月定額提撥</span>
+                <span className="text-emerald-400 font-bold text-sm">
+                  NT$ {result.monthly.toLocaleString()}
+                </span>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* 輔助單筆投入提示 */}
+        <div className="text-[11px] text-slate-500 border-t border-slate-800/80 pt-2 flex items-center justify-between">
+          <span>
+            {result.lump_sum_today > 0 ? (
+              <>💡 若不每月定投，今天直接一次性單筆到位需再投入 <strong className="text-slate-300 font-mono">NT$ {(result.lump_sum_today / 10000).toLocaleString(undefined, { maximumFractionDigits: 1 })} 萬元</strong></>
+            ) : (
+              <>💡 現有資產折現後已全額滿足目標現值，無需額外補入單筆本金</>
+            )}
+          </span>
+          <span className="text-slate-600 font-mono hidden sm:inline">
+            終值公式: FV = PV × (1 + r)^n
+          </span>
+        </div>
+      </div>
+
       {/* 試算結果指標卡 */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <MetricCard
           title="每月需定期定額"
-          value={`NT$ ${result.monthly.toLocaleString()}`}
-          subLabel="每月投入"
-          subValue={`${targetYears} 年共 ${targetYears * 12} 期`}
+          value={result.monthly === 0 ? "已達標免定投" : `NT$ ${result.monthly.toLocaleString()}`}
+          subLabel="扣除終值後缺口"
+          subValue={`NT$ ${(result.remaining / 10000).toLocaleString(undefined, { maximumFractionDigits: 1 })} 萬`}
           icon={Calendar}
-          badge="每月任務"
-          badgeColor="indigo"
+          badge={result.monthly === 0 ? "已達標" : `${targetYears}年共${targetYears * 12}期`}
+          badgeColor={result.monthly === 0 ? "green" : "indigo"}
         />
         <MetricCard
-          title="或今日單筆投入"
-          value={`NT$ ${(result.lump_sum_today / 10000).toLocaleString(undefined, {
+          title="現有持股屆時終值"
+          value={`NT$ ${(result.existing_fv / 10000).toLocaleString(undefined, {
             maximumFractionDigits: 1,
           })} 萬`}
-          subLabel="現值折現"
-          subValue="若不每月定額"
+          subLabel="持股加權年化"
+          subValue={`${result.effective_existing_cagr.toFixed(1)}% (${targetYears}年複利)`}
           icon={Wallet}
-          badge="一次到位"
+          badge={`${Math.min(100, Math.round((result.existing_fv / targetAmount) * 100))}% 佔比`}
           badgeColor="cyan"
         />
         <MetricCard
@@ -334,7 +423,7 @@ export const TargetView: React.FC = () => {
             (result.total_invested + existingAsset) /
             10000
           ).toLocaleString(undefined, { maximumFractionDigits: 1 })} 萬`}
-          subLabel="包含現有本金"
+          subLabel="含現有市值"
           subValue={`${(existingAsset / 10000).toFixed(0)} 萬`}
           icon={Coins}
           badge="自備資金"
@@ -348,7 +437,7 @@ export const TargetView: React.FC = () => {
           subLabel="獲利佔比"
           subValue={`${gainRatio}%`}
           icon={TrendingUp}
-          badge="複利魔法"
+          badge={isRealMode ? "實質純益" : "複利魔法"}
           badgeColor="green"
         />
       </div>
