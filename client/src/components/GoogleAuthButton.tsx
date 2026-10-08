@@ -41,8 +41,9 @@ export const GoogleAuthButton: React.FC = () => {
               theme: "filled_black",
               size: "medium",
               shape: "pill",
-              text: "signin_with",
+              text: "signin",
               locale: "zh_TW",
+              width: 130,
             });
           }
         } catch (e) {
@@ -128,17 +129,17 @@ export const GoogleAuthButton: React.FC = () => {
   }
 
   return (
-    <div className="flex items-center gap-2">
-      <div ref={buttonDivRef} className="h-8 flex items-center overflow-hidden rounded-full" />
+    <div className="flex items-center gap-2 shrink-0">
+      <div ref={buttonDivRef} className="h-8 flex items-center overflow-hidden rounded-full shrink-0" />
       {!isGsiLoaded && (
         <button
           onClick={() => {
             alert("正在載入 Google 登入服務，請稍候...");
           }}
-          className="px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-800/60 text-slate-300 border border-slate-700/60 hover:bg-slate-800 flex items-center gap-1.5"
+          className="px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-800/60 text-slate-300 border border-slate-700/60 hover:bg-slate-800 flex items-center gap-1.5 shrink-0 whitespace-nowrap"
         >
           <Cloud className="w-3.5 h-3.5 text-slate-400" />
-          <span>登入以同步</span>
+          <span>登入</span>
         </button>
       )}
     </div>

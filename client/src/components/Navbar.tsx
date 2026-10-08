@@ -35,32 +35,32 @@ export const Navbar: React.FC<NavbarProps> = ({ onOpenSettings }) => {
   return (
     <header className="sticky top-0 z-40 w-full glass-panel border-b border-slate-800/80 bg-slate-950/85">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex items-center justify-between h-16">
+        <div className="flex items-center justify-between h-16 gap-2">
           {/* Logo & 標題 */}
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-600 via-indigo-500 to-cyan-400 p-0.5 shadow-lg shadow-indigo-500/20 flex items-center justify-center">
+          <div className="flex items-center gap-2.5 sm:gap-3 shrink-0">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-600 via-indigo-500 to-cyan-400 p-0.5 shadow-lg shadow-indigo-500/20 flex items-center justify-center shrink-0">
               <div className="w-full h-full bg-slate-950 rounded-[10px] flex items-center justify-center">
                 <span className="text-xl">📈</span>
               </div>
             </div>
-            <div>
+            <div className="min-w-0">
               <div className="flex items-center gap-2">
-                <h1 className="font-bold text-base sm:text-lg text-white tracking-tight">
+                <h1 className="font-bold text-base sm:text-lg text-white tracking-tight whitespace-nowrap">
                   台股 ETF 分析器
                 </h1>
               </div>
-              <p className="text-xs text-slate-400 hidden sm:block">
+              <p className="text-xs text-slate-400 hidden lg:block whitespace-nowrap">
                 Guyton-Klinger 護欄 · 蒙地卡羅模擬
               </p>
             </div>
           </div>
 
           {/* 右側快捷控制開關 */}
-          <div className="flex items-center gap-2 sm:gap-3">
+          <div className="flex items-center gap-2 sm:gap-2.5 shrink-0">
             {/* 返回記帳助手 */}
             <a
               href="https://money-tracker.xyz"
-              className="px-2.5 py-1.5 rounded-lg text-xs font-medium text-slate-300 hover:text-white bg-slate-900 border border-slate-800 hover:border-slate-700 transition-colors hidden sm:flex items-center gap-1.5"
+              className="px-2.5 py-1.5 rounded-lg text-xs font-medium text-slate-300 hover:text-white bg-slate-900 border border-slate-800 hover:border-slate-700 transition-colors hidden md:flex items-center gap-1.5 shrink-0 whitespace-nowrap"
             >
               <span>💰 記帳助手</span>
               <ExternalLink className="w-3 h-3 text-slate-400" />
@@ -72,7 +72,7 @@ export const Navbar: React.FC<NavbarProps> = ({ onOpenSettings }) => {
             {/* 實質/名目快速切換鈕 */}
             <button
               onClick={() => setIsRealMode(!isRealMode)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 border ${isRealMode
+              className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 border shrink-0 whitespace-nowrap ${isRealMode
                 ? "bg-cyan-500/15 text-cyan-300 border-cyan-500/30"
                 : "bg-slate-800/60 text-slate-400 border-slate-700/60 hover:text-slate-200"
                 }`}
@@ -83,7 +83,7 @@ export const Navbar: React.FC<NavbarProps> = ({ onOpenSettings }) => {
 
             {/* 稅率狀態徽章 */}
             {taxConfig.enabled && (
-              <span className="px-2 py-1 rounded-lg text-xs font-medium bg-amber-500/15 text-amber-300 border border-amber-500/30 hidden md:inline-flex">
+              <span className="px-2 py-1 rounded-lg text-xs font-medium bg-amber-500/15 text-amber-300 border border-amber-500/30 hidden lg:inline-flex shrink-0 whitespace-nowrap">
                 已扣稅費
               </span>
             )}
@@ -91,7 +91,7 @@ export const Navbar: React.FC<NavbarProps> = ({ onOpenSettings }) => {
             {/* 參數設定抽屜按鈕 */}
             <button
               onClick={onOpenSettings}
-              className="p-2 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-200 border border-slate-700/80 transition-colors shadow-sm"
+              className="p-2 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-200 border border-slate-700/80 transition-colors shadow-sm shrink-0"
               title="開啟全域參數與稅費設定"
             >
               <SlidersHorizontal className="w-4 h-4" />
