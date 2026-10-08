@@ -25,6 +25,8 @@ import {
   calcTargetAssetsFromExpense,
 } from "../core/performance";
 import { MetricCard } from "../components/MetricCard";
+import { HoldingsEditor } from "../components/HoldingsEditor";
+import { NumericInput } from "../components/NumericInput";
 
 export const TargetView: React.FC = () => {
   const {
@@ -117,6 +119,9 @@ export const TargetView: React.FC = () => {
         </div>
       </div>
 
+      {/* 目前持股明細編輯區 (自動計算現有資產與年化報酬) */}
+      <HoldingsEditor onApplyCagr={(c) => setExpectedCagr(c)} />
+
       {/* 輸入控制面板 */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* 左側 2 欄: 主要目標設定 */}
@@ -132,16 +137,11 @@ export const TargetView: React.FC = () => {
                 目標資產總額 (萬元)
               </label>
               <div className="flex items-center gap-2">
-                <input
-                  type="number"
-                  step="100"
-                  min="100"
-                  value={targetAmount / 10000}
-                  onChange={(e) =>
-                    setTargetAmount(
-                      Math.max(100, parseFloat(e.target.value) || 0) * 10000
-                    )
-                  }
+                <NumericInput
+                  value={Math.round(targetAmount / 10000)}
+                  min={10}
+                  onCommit={(val) => setTargetAmount(val * 10000)}
+                  placeholder="2000"
                   className="w-full bg-slate-900 border border-slate-700 px-3 py-2 rounded-xl text-sm font-mono font-bold text-white focus:outline-none focus:border-indigo-500"
                 />
                 <span className="text-xs text-slate-400 whitespace-nowrap">萬 TWD</span>
@@ -165,16 +165,11 @@ export const TargetView: React.FC = () => {
                 目前已有資產市值 (萬元)
               </label>
               <div className="flex items-center gap-2">
-                <input
-                  type="number"
-                  step="50"
-                  min="0"
-                  value={existingAsset / 10000}
-                  onChange={(e) =>
-                    setExistingAsset(
-                      Math.max(0, parseFloat(e.target.value) || 0) * 10000
-                    )
-                  }
+                <NumericInput
+                  value={Math.round(existingAsset / 10000)}
+                  min={0}
+                  onCommit={(val) => setExistingAsset(val * 10000)}
+                  placeholder="0"
                   className="w-full bg-slate-900 border border-slate-700 px-3 py-2 rounded-xl text-sm font-mono font-bold text-white focus:outline-none focus:border-indigo-500"
                 />
                 <span className="text-xs text-slate-400 whitespace-nowrap">萬 TWD</span>
@@ -251,31 +246,43 @@ export const TargetView: React.FC = () => {
                 <label className="text-xs text-slate-300 block mb-1">
                   退休每月預期生活費 (TWD)
                 </label>
-                <input
-                  type="number"
-                  step="5000"
-                  min="20000"
+                <NumericInput
                   value={monthlyExpense}
-                  onChange={(e) =>
-                    setMonthlyExpense(Math.max(10000, parseInt(e.target.value) || 0))
-                  }
-                  className="w-full bg-slate-900 border border-slate-700 px-3 py-1.5 rounded-xl text-xs font-mono text-white"
+                  min={1000}
+                  onCommit={(val) => setMonthlyExpense(val)}
+                  placeholder="60000"
+                  className="w-full bg-slate-900 border border-slate-700 px-3 py-1.5 rounded-xl text-xs font-mono text-white focus:outline-none focus:border-indigo-500"
                 />
               </div>
 
               <div>
-                <label className="text-xs text-slate-300 block mb-1">
-                  安全提領率 (SWR %)
-                </label>
-                <div className="flex gap-2">
-                  {[3.5, 4.0, 4.5, 5.0].map((r) => (
+                <div className="flex justify-between items-center mb-1">
+                  <label className="text-xs font-medium text-slate-300">
+                    安全提領率 (SWR %)
+                  </label>
+                  <div className="flex items-center gap-1">
+                    <NumericInput
+                      value={swr}
+                      min={0.5}
+                      max={20.0}
+                      step="0.1"
+                      onCommit={(val) => setSwr(val)}
+                      placeholder="4.0"
+                      className="w-16 bg-slate-950 border border-slate-700 px-2 py-0.5 rounded-lg text-xs font-mono font-bold text-cyan-400 text-right focus:outline-none focus:border-cyan-500"
+                    />
+                    <span className="text-xs font-mono text-slate-400">%</span>
+                  </div>
+                </div>
+                <div className="flex gap-1.5 pt-1">
+                  {[3.0, 3.5, 4.0, 4.5, 5.0].map((r) => (
                     <button
                       key={r}
+                      type="button"
                       onClick={() => setSwr(r)}
-                      className={`flex-1 py-1 rounded-lg text-xs font-mono font-semibold ${
+                      className={`flex-1 py-1 rounded-lg text-xs font-mono font-semibold transition-colors ${
                         swr === r
                           ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/40"
-                          : "bg-slate-800 text-slate-400 hover:text-slate-200"
+                          : "bg-slate-800 text-slate-400 hover:text-slate-200 border border-slate-750"
                       }`}
                     >
                       {r}%

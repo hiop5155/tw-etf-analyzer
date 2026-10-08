@@ -55,6 +55,8 @@ export const GoogleAuthButton: React.FC = () => {
     checkGsi();
   }, [isLoggedIn, loginWithGoogle]);
 
+  const [imgError, setImgError] = useState(false);
+
   if (isLoggedIn && user) {
     return (
       <div className="relative">
@@ -62,10 +64,16 @@ export const GoogleAuthButton: React.FC = () => {
           onClick={() => setShowDropdown(!showDropdown)}
           className="flex items-center gap-2 px-2.5 py-1.5 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 transition-colors text-xs"
         >
-          {user.avatar ? (
-            <img src={user.avatar} alt={user.name} className="w-5 h-5 rounded-full object-cover" />
+          {user.avatar && !imgError ? (
+            <img
+              src={user.avatar}
+              alt={user.name}
+              referrerPolicy="no-referrer"
+              onError={() => setImgError(true)}
+              className="w-5 h-5 rounded-full object-cover"
+            />
           ) : (
-            <div className="w-5 h-5 rounded-full bg-indigo-600 flex items-center justify-center text-[10px] text-white font-bold">
+            <div className="w-5 h-5 rounded-full bg-gradient-to-tr from-indigo-600 to-violet-500 flex items-center justify-center text-[10px] text-white font-bold">
               {user.name.charAt(0).toUpperCase()}
             </div>
           )}
@@ -73,41 +81,35 @@ export const GoogleAuthButton: React.FC = () => {
             {user.name}
           </span>
 
-          {/* 同步狀態指示 */}
-          {syncStatus === "syncing" && (
-            <span title="同步至 D1 資料庫中...">
-              <RefreshCw className="w-3.5 h-3.5 text-amber-400 animate-spin" />
-            </span>
-          )}
-          {syncStatus === "saved" && (
-            <span className="w-2 h-2 rounded-full bg-emerald-400" title="已同步至 D1 資料庫" />
-          )}
-          {syncStatus === "error" && (
-            <span className="w-2 h-2 rounded-full bg-rose-400" title="同步異常" />
-          )}
+          {/* 雲端自動同步指示燈：恆亮綠色，全自動儲存 */}
+          <span className="w-2 h-2 rounded-full bg-emerald-400" title="雲端設定已連線，全自動儲存中" />
         </button>
 
         {showDropdown && (
-          <div className="absolute right-0 mt-2 w-52 bg-slate-900 border border-slate-800 rounded-xl shadow-xl p-2 z-50 animate-in fade-in slide-in-from-top-1 duration-150">
-            <div className="px-3 py-2 border-b border-slate-800/80 mb-1">
-              <div className="text-xs font-semibold text-white truncate">{user.name}</div>
-              <div className="text-[11px] text-slate-400 truncate">{user.email}</div>
-              <div className="flex items-center gap-1.5 mt-2 text-[10px] text-emerald-400 font-mono">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                <span>Cloudflare D1 雲端已連線</span>
+          <div className="absolute right-0 mt-2 w-56 bg-slate-900 border border-slate-800 rounded-xl shadow-xl p-2 z-50 animate-in fade-in slide-in-from-top-1 duration-150">
+            <div className="px-3 py-2.5 border-b border-slate-800/80 mb-1 flex items-center gap-2.5">
+              {user.avatar && !imgError ? (
+                <img
+                  src={user.avatar}
+                  alt={user.name}
+                  referrerPolicy="no-referrer"
+                  onError={() => setImgError(true)}
+                  className="w-8 h-8 rounded-full object-cover shrink-0"
+                />
+              ) : (
+                <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-indigo-600 to-violet-500 flex items-center justify-center text-xs text-white font-bold shrink-0">
+                  {user.name.charAt(0).toUpperCase()}
+                </div>
+              )}
+              <div className="min-w-0 flex-1">
+                <div className="text-xs font-semibold text-white truncate">{user.name}</div>
+                <div className="text-[11px] text-slate-400 truncate">{user.email}</div>
+                <div className="flex items-center gap-1.5 mt-1 text-[10px] text-emerald-400">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                  <span>雲端自動同步中</span>
+                </div>
               </div>
             </div>
-
-            <button
-              onClick={() => {
-                syncNow();
-                setShowDropdown(false);
-              }}
-              className="w-full text-left px-3 py-2 rounded-lg text-xs text-slate-300 hover:bg-slate-800 flex items-center gap-2 transition-colors"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${syncStatus === "syncing" ? "animate-spin" : ""}`} />
-              <span>立即同步設定</span>
-            </button>
 
             <button
               onClick={() => {

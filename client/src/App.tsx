@@ -44,10 +44,6 @@ const MainContent: React.FC = () => {
           <div className="flex items-center gap-2">
             <span>📈 台股 ETF 分析與動態退休提領系統</span>
             <span className="text-slate-700">|</span>
-            <span className="text-slate-400 font-mono">Cloudflare Serverless Edition</span>
-          </div>
-          <div className="text-slate-600">
-            Powered by React 19 · Vite · Cloudflare Pages · FinMind API
           </div>
         </div>
       </footer>

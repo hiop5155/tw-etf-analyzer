@@ -28,6 +28,7 @@ import {
   dividendNetRatio,
 } from "../core/tax";
 import { NHI_RATE, NHI_THRESHOLD } from "../core/constants";
+import { NumericInput } from "../components/NumericInput";
 import { MetricCard } from "../components/MetricCard";
 
 export const DividendView: React.FC = () => {
@@ -266,14 +267,12 @@ export const DividendView: React.FC = () => {
                 <div className="flex items-center gap-3">
                   <div className="flex items-center gap-2 bg-slate-900 px-3 py-1.5 rounded-xl border border-slate-800">
                     <span className="text-xs text-slate-400">持有張數:</span>
-                    <input
-                      type="number"
-                      min="1"
+                    <NumericInput
                       value={holdingLots}
-                      onChange={(e) =>
-                        setHoldingLots(Math.max(1, parseInt(e.target.value) || 1))
-                      }
-                      className="w-16 bg-slate-800 text-xs font-mono font-bold text-white px-2 py-0.5 rounded text-right"
+                      min={1}
+                      onCommit={(val) => setHoldingLots(val)}
+                      placeholder="1"
+                      className="w-16 bg-slate-800 text-xs font-mono font-bold text-white px-2 py-0.5 rounded text-right focus:outline-none focus:border-indigo-500"
                     />
                     <span className="text-xs text-slate-400">張</span>
                   </div>

@@ -21,12 +21,18 @@ export interface UserProfile {
 
 export type SyncStatus = "idle" | "syncing" | "saved" | "error";
 
+export interface UserHolding {
+  stockId: string;
+  shares: number;
+}
+
 export interface SavedPortfolioSettings {
   selectedStock: string;
   monthlyDca: number;
   targetAmount: number;
   targetYears: number;
   existingAsset: number;
+  userHoldings?: UserHolding[];
   initialAsset: number;
   initialWithdrawalRate: number;
   guardrailPct: number;
@@ -64,6 +70,8 @@ interface AppContextType {
   setTargetYears: (years: number) => void;
   existingAsset: number;
   setExistingAsset: (asset: number) => void;
+  userHoldings: UserHolding[];
+  setUserHoldings: React.Dispatch<React.SetStateAction<UserHolding[]>>;
 
   initialAsset: number;
   setInitialAsset: (asset: number) => void;
@@ -137,6 +145,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [targetAmount, setTargetAmount] = useState<number>(initialSaved.targetAmount ?? 20_000_000);
   const [targetYears, setTargetYears] = useState<number>(initialSaved.targetYears ?? 15);
   const [existingAsset, setExistingAsset] = useState<number>(initialSaved.existingAsset ?? 2_000_000);
+  const [userHoldings, setUserHoldings] = useState<UserHolding[]>(
+    initialSaved.userHoldings || [
+      { stockId: "0050", shares: 10_000 },
+      { stockId: "00878", shares: 15_000 },
+      { stockId: "現金", shares: 300_000 },
+    ]
+  );
 
   const [initialAsset, setInitialAsset] = useState<number>(initialSaved.initialAsset ?? 20_000_000);
   const [initialWithdrawalRate, setInitialWithdrawalRate] = useState<number>(initialSaved.initialWithdrawalRate ?? 0.05);
@@ -173,6 +188,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     targetAmount,
     targetYears,
     existingAsset,
+    userHoldings,
     initialAsset,
     initialWithdrawalRate,
     guardrailPct,
@@ -188,6 +204,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     targetAmount,
     targetYears,
     existingAsset,
+    userHoldings,
     initialAsset,
     initialWithdrawalRate,
     guardrailPct,
@@ -206,6 +223,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (typeof settings.targetAmount === "number") setTargetAmount(settings.targetAmount);
     if (typeof settings.targetYears === "number") setTargetYears(settings.targetYears);
     if (typeof settings.existingAsset === "number") setExistingAsset(settings.existingAsset);
+    if (Array.isArray(settings.userHoldings)) setUserHoldings(settings.userHoldings);
     if (typeof settings.initialAsset === "number") setInitialAsset(settings.initialAsset);
     if (typeof settings.initialWithdrawalRate === "number") setInitialWithdrawalRate(settings.initialWithdrawalRate);
     if (typeof settings.guardrailPct === "number") setGuardrailPct(settings.guardrailPct);
@@ -229,13 +247,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, []);
 
-  // 2. 當有 Token 時，從 D1 雲端抓取投組
+  // 隨時保持 currentSettingsRef 最新
+  const currentSettingsRef = useRef<SavedPortfolioSettings>(getCurrentSettings());
+  useEffect(() => {
+    currentSettingsRef.current = getCurrentSettings();
+  }, [getCurrentSettings]);
+
+  const lastSyncedJsonRef = useRef<string>("");
+  const fetchedTokenRef = useRef<string | null>(null);
+
+  // 2. 當有 Token 時，從 D1 雲端抓取投組 (不重複 GET，且不顯示轉圈擾民，保持綠色)
   const fetchCloudPortfolio = useCallback(async (authToken: string) => {
     try {
-      setSyncStatus("syncing");
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 8000);
       const res = await fetch("/api/portfolio", {
         headers: { Authorization: `Bearer ${authToken}` },
+        signal: controller.signal,
       });
+      clearTimeout(timeoutId);
+
       if (res.status === 401) {
         // Token 過期或無效
         setToken(null);
@@ -247,70 +278,91 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
       const data = await res.json();
       if (data.exists && data.settings) {
+        lastSyncedJsonRef.current = JSON.stringify(data.settings);
         applySettings(data.settings);
         localStorage.setItem(LOCAL_STORAGE_SETTINGS_KEY, JSON.stringify(data.settings));
-        setSyncStatus("saved");
       } else {
         // 雲端尚無資料，將本地目前設定上傳
-        const current = getCurrentSettings();
+        const currentJson = JSON.stringify(currentSettingsRef.current);
+        lastSyncedJsonRef.current = currentJson;
         await fetch("/api/portfolio", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
             Authorization: `Bearer ${authToken}`,
           },
-          body: JSON.stringify(current),
+          body: currentJson,
         });
-        setSyncStatus("saved");
       }
+      // 成功載入或建立，維持亮綠色 (已同步連線狀態)
+      setSyncStatus("saved");
     } catch (err) {
-      console.error("Failed to load portfolio from D1:", err);
-      setSyncStatus("error");
+      console.warn("Portfolio initial fetch:", err);
+      setSyncStatus("saved"); // 本地已保存，維持綠色
     } finally {
       isInitialLoadDone.current = true;
     }
-  }, [applySettings, getCurrentSettings]);
+  }, [applySettings]);
 
   useEffect(() => {
     if (token) {
-      fetchCloudPortfolio(token);
+      if (fetchedTokenRef.current !== token) {
+        fetchedTokenRef.current = token;
+        fetchCloudPortfolio(token);
+      }
     } else {
+      fetchedTokenRef.current = null;
       isInitialLoadDone.current = true;
+      setSyncStatus("idle");
     }
   }, [token, fetchCloudPortfolio]);
 
-  // 3. 變更自動防抖同步至 D1 資料庫與 LocalStorage
+  // 3. 變更全自動防抖同步至 D1 資料庫與 LocalStorage (靜默儲存，不轉圈擾民)
   const syncTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     if (!isInitialLoadDone.current) return;
 
     const current = getCurrentSettings();
-    localStorage.setItem(LOCAL_STORAGE_SETTINGS_KEY, JSON.stringify(current));
+    const currentJson = JSON.stringify(current);
+    localStorage.setItem(LOCAL_STORAGE_SETTINGS_KEY, currentJson);
 
-    if (token) {
-      setSyncStatus("syncing");
-      if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
+    // 未登入則只存本地，不發送雲端同步
+    if (!token) return;
 
-      syncTimeoutRef.current = setTimeout(async () => {
-        try {
-          const res = await fetch("/api/portfolio", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${token}`,
-            },
-            body: JSON.stringify(current),
-          });
-          if (res.ok) {
-            setSyncStatus("saved");
-          } else {
-            setSyncStatus("error");
-          }
-        } catch {
-          setSyncStatus("error");
+    // 若設定與上次已同步之內容完全一致，無需再次同步
+    if (currentJson === lastSyncedJsonRef.current) return;
+
+    if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
+
+    syncTimeoutRef.current = setTimeout(async () => {
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 8000);
+
+        const res = await fetch("/api/portfolio", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: currentJson,
+          signal: controller.signal,
+        });
+        clearTimeout(timeoutId);
+
+        if (res.ok) {
+          lastSyncedJsonRef.current = currentJson;
+          setSyncStatus("saved");
+        } else if (res.status === 401) {
+          setToken(null);
+          setUser(null);
+          localStorage.removeItem(LOCAL_STORAGE_TOKEN_KEY);
+          setSyncStatus("idle");
         }
-      }, 1200);
-    }
+      } catch {
+        // 靜默捕捉背景儲存，維持本地設定與綠色指示
+      }
+    }, 1000);
 
     return () => {
       if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
@@ -323,6 +375,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     targetAmount,
     targetYears,
     existingAsset,
+    userHoldings,
     initialAsset,
     initialWithdrawalRate,
     guardrailPct,
@@ -337,7 +390,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Google 登入處理
   const loginWithGoogle = async (credential: string): Promise<boolean> => {
     try {
-      setSyncStatus("syncing");
       const res = await fetch("/api/auth/google", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -363,12 +415,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       // 跨子網域 SSO Cookie 同步 (money-tracker.xyz & calc.money-tracker.xyz)
       setSharedAuth(data.token, profile);
 
-      // 登入後立即載入雲端投組
-      await fetchCloudPortfolio(data.token);
+      setSyncStatus("saved");
       return true;
     } catch (err) {
       console.error(err);
-      setSyncStatus("error");
       return false;
     }
   };
@@ -437,6 +487,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setTargetYears,
         existingAsset,
         setExistingAsset,
+        userHoldings,
+        setUserHoldings,
         initialAsset,
         setInitialAsset,
         initialWithdrawalRate,

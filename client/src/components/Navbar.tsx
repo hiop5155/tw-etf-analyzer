@@ -48,12 +48,9 @@ export const Navbar: React.FC<NavbarProps> = ({ onOpenSettings }) => {
                 <h1 className="font-bold text-base sm:text-lg text-white tracking-tight">
                   台股 ETF 分析器
                 </h1>
-                <span className="px-1.5 py-0.5 text-[10px] font-mono font-semibold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 rounded">
-                  Cloudflare Edition
-                </span>
               </div>
               <p className="text-xs text-slate-400 hidden sm:block">
-                0ms 永不休眠 · Guyton-Klinger 護欄 · 蒙地卡羅千次模擬
+                Guyton-Klinger 護欄 · 蒙地卡羅模擬
               </p>
             </div>
           </div>
@@ -75,11 +72,10 @@ export const Navbar: React.FC<NavbarProps> = ({ onOpenSettings }) => {
             {/* 實質/名目快速切換鈕 */}
             <button
               onClick={() => setIsRealMode(!isRealMode)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 border ${
-                isRealMode
-                  ? "bg-cyan-500/15 text-cyan-300 border-cyan-500/30"
-                  : "bg-slate-800/60 text-slate-400 border-slate-700/60 hover:text-slate-200"
-              }`}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 border ${isRealMode
+                ? "bg-cyan-500/15 text-cyan-300 border-cyan-500/30"
+                : "bg-slate-800/60 text-slate-400 border-slate-700/60 hover:text-slate-200"
+                }`}
               title="切換名目值 vs 扣除通膨實質值"
             >
               <span>{isRealMode ? "🛡️ 實質購買力" : "💵 名目金流"}</span>
@@ -112,11 +108,10 @@ export const Navbar: React.FC<NavbarProps> = ({ onOpenSettings }) => {
               <button
                 key={item.key}
                 onClick={() => setActiveTab(item.key)}
-                className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs sm:text-sm font-medium transition-all whitespace-nowrap ${
-                  isActive
-                    ? "bg-indigo-600 text-white shadow-lg shadow-indigo-600/25 font-semibold"
-                    : "text-slate-400 hover:text-slate-200 hover:bg-slate-800/50"
-                }`}
+                className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs sm:text-sm font-medium transition-all whitespace-nowrap ${isActive
+                  ? "bg-indigo-600 text-white shadow-lg shadow-indigo-600/25 font-semibold"
+                  : "text-slate-400 hover:text-slate-200 hover:bg-slate-800/50"
+                  }`}
               >
                 <Icon className={`w-4 h-4 ${isActive ? "text-white" : "text-slate-400"}`} />
                 <span>{item.label}</span>

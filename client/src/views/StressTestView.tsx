@@ -25,6 +25,7 @@ import { fetchAdjustedPrices } from "../services/api";
 import { PricePoint, StressScenarioResult } from "../core/types";
 import { runStressTests } from "../core/stress";
 import { MetricCard } from "../components/MetricCard";
+import { PortfolioEditor } from "../components/PortfolioEditor";
 
 export const StressTestView: React.FC = () => {
   const {
@@ -102,6 +103,12 @@ export const StressTestView: React.FC = () => {
           </p>
         </div>
       </div>
+
+      {/* 壓力測試投組配置 */}
+      <PortfolioEditor
+        title="🗂️ 壓力測試投資組合"
+        subtitle="調整要在歷史熊市黑天鵝情境下進行壓力測試的 ETF 配置比例 %"
+      />
 
       {loading && (
         <div className="glass-panel rounded-2xl p-16 flex flex-col items-center justify-center gap-3">

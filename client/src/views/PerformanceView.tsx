@@ -28,6 +28,7 @@ import { fetchAdjustedPrices, fetchStockInfo } from "../services/api";
 import { PricePoint, RiskMetrics, ComparisonResult } from "../core/types";
 import { calcRiskMetrics } from "../core/metrics";
 import { calcComparison } from "../core/performance";
+import { NumericInput } from "../components/NumericInput";
 import { MetricCard } from "../components/MetricCard";
 
 const POPULAR_STOCKS = [
@@ -162,12 +163,11 @@ export const PerformanceView: React.FC = () => {
           <DollarSign className="w-4 h-4 text-emerald-400 shrink-0" />
           <div className="flex items-center gap-2">
             <span className="text-xs text-slate-400 whitespace-nowrap">每月定期定額:</span>
-            <input
-              type="number"
-              step="5000"
-              min="1000"
+            <NumericInput
               value={monthlyDca}
-              onChange={(e) => setMonthlyDca(Math.max(1000, parseInt(e.target.value) || 0))}
+              min={500}
+              onCommit={(val) => setMonthlyDca(val)}
+              placeholder="20000"
               className="w-24 bg-slate-800 border border-slate-700 px-2 py-1 rounded text-xs font-mono font-bold text-white text-right focus:outline-none focus:border-indigo-500"
             />
             <span className="text-xs text-slate-400">元</span>

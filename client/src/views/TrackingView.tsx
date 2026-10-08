@@ -26,6 +26,7 @@ import { fetchAdjustedPrices } from "../services/api";
 import { HistoricalTrackingResult, PricePoint } from "../core/types";
 import { runGKHistorical } from "../core/simulation";
 import { MetricCard } from "../components/MetricCard";
+import { PortfolioEditor } from "../components/PortfolioEditor";
 
 export const TrackingView: React.FC = () => {
   const {
@@ -120,6 +121,12 @@ export const TrackingView: React.FC = () => {
           </select>
         </div>
       </div>
+
+      {/* 提領追蹤持股配置 */}
+      <PortfolioEditor
+        title="📦 持倉目標配置（提領策略回測）"
+        subtitle="自訂要依歷史實際月報酬進行 GK 護欄提領回測的持股配比"
+      />
 
       {loading && (
         <div className="glass-panel rounded-2xl p-16 flex flex-col items-center justify-center gap-3">

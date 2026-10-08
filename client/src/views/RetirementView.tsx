@@ -30,6 +30,8 @@ import { simulateGK, simulateGKMonteCarlo } from "../core/simulation";
 import { fetchAdjustedPrices } from "../services/api";
 import { calcReturnVol } from "../core/metrics";
 import { MetricCard } from "../components/MetricCard";
+import { PortfolioEditor } from "../components/PortfolioEditor";
+import { NumericInput } from "../components/NumericInput";
 
 export const RetirementView: React.FC = () => {
   const {
@@ -182,36 +184,11 @@ export const RetirementView: React.FC = () => {
         </div>
       </div>
 
-      {/* 投組切換膠囊 */}
-      <div className="glass-panel rounded-2xl p-4 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs font-semibold text-slate-400 mr-1">推薦投組:</span>
-          {PRESET_PORTFOLIOS.map((p) => (
-            <button
-              key={p.name}
-              onClick={() => {
-                setActivePreset(p.name);
-                applyPresetPortfolio(p.name);
-              }}
-              className={`px-3 py-1.5 rounded-xl text-xs font-medium transition-all ${
-                activePreset === p.name
-                  ? "bg-indigo-600 text-white font-semibold shadow-md shadow-indigo-600/30"
-                  : "bg-slate-800/80 hover:bg-slate-700 text-slate-300 border border-slate-700/50"
-              }`}
-            >
-              {p.name.split(" ")[0]}
-            </button>
-          ))}
-        </div>
-
-        {/* 投組成分簡覽 */}
-        <div className="flex items-center gap-2 text-xs font-mono text-slate-300 bg-slate-900/80 px-3 py-1.5 rounded-xl border border-slate-800">
-          <span className="text-slate-500">當前權重:</span>
-          {Object.entries(portfolioAllocations)
-            .map(([id, w]) => `${id} ${(w * 100).toFixed(0)}%`)
-            .join(" · ")}
-        </div>
-      </div>
+      {/* 退休後投資組合配置編輯器 (支援自訂標的與自由配比) */}
+      <PortfolioEditor
+        title="🗂️ 退休後投資組合配置"
+        subtitle="選擇推薦策略範本，或自由新增 ETF、調整配置比例 %"
+      />
 
       {/* 退休提領參數設定面板 */}
       <div className="glass-panel rounded-2xl p-5 space-y-5">
@@ -226,16 +203,11 @@ export const RetirementView: React.FC = () => {
               起始退休本金 (萬元)
             </label>
             <div className="flex items-center gap-2">
-              <input
-                type="number"
-                step="100"
-                min="100"
-                value={initialAsset / 10000}
-                onChange={(e) =>
-                  setInitialAsset(
-                    Math.max(100, parseFloat(e.target.value) || 0) * 10000
-                  )
-                }
+              <NumericInput
+                value={Math.round(initialAsset / 10000)}
+                min={10}
+                onCommit={(val) => setInitialAsset(val * 10000)}
+                placeholder="2000"
                 className="w-full bg-slate-900 border border-slate-700 px-3 py-2 rounded-xl text-sm font-mono font-bold text-white focus:outline-none focus:border-indigo-500"
               />
               <span className="text-xs text-slate-400 whitespace-nowrap">萬 TWD</span>
@@ -255,18 +227,27 @@ export const RetirementView: React.FC = () => {
 
           {/* 初始提領率 */}
           <div className="space-y-1.5">
-            <div className="flex justify-between">
+            <div className="flex justify-between items-center">
               <label className="text-xs font-medium text-slate-300">
                 初始提領率 (Initial SWR)
               </label>
-              <span className="text-xs font-mono font-bold text-cyan-400">
-                {(initialWithdrawalRate * 100).toFixed(1)}%
-              </span>
+              <div className="flex items-center gap-1">
+                <NumericInput
+                  value={Math.round(initialWithdrawalRate * 1000) / 10}
+                  min={0.5}
+                  max={20.0}
+                  step="0.1"
+                  onCommit={(val) => setInitialWithdrawalRate(val / 100)}
+                  placeholder="5.0"
+                  className="w-16 bg-slate-950 border border-slate-700 px-2 py-0.5 rounded-lg text-xs font-mono font-bold text-cyan-400 text-right focus:outline-none focus:border-cyan-500"
+                />
+                <span className="text-xs font-mono font-bold text-cyan-400">%</span>
+              </div>
             </div>
             <input
               type="range"
-              min="3.0"
-              max="7.0"
+              min="1.0"
+              max="12.0"
               step="0.25"
               value={initialWithdrawalRate * 100}
               onChange={(e) =>
@@ -278,7 +259,7 @@ export const RetirementView: React.FC = () => {
               <span>3% (超安全)</span>
               <span>4% (經典)</span>
               <span>5% (GK推薦)</span>
-              <span>7%</span>
+              <span>7%+</span>
             </div>
           </div>
 

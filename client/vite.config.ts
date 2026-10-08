@@ -20,8 +20,9 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': {
-        target: 'http://localhost:8788',
-        changeOrigin: true
+        target: process.env.VITE_API_URL || 'https://calc.money-tracker.xyz',
+        changeOrigin: true,
+        secure: false,
       }
     }
   }
