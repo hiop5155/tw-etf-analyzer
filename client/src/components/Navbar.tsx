@@ -35,28 +35,28 @@ export const Navbar: React.FC<NavbarProps> = ({ onOpenSettings }) => {
   return (
     <header className="sticky top-0 z-40 w-full glass-panel border-b border-slate-800/80 bg-slate-950/85">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex items-center justify-between h-16 gap-2">
+        <div className="flex items-center justify-between h-16 gap-1.5 sm:gap-2">
           {/* Logo & 標題 */}
-          <div className="flex items-center gap-2.5 sm:gap-3 shrink-0">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-600 via-indigo-500 to-cyan-400 p-0.5 shadow-lg shadow-indigo-500/20 flex items-center justify-center shrink-0">
-              <div className="w-full h-full bg-slate-950 rounded-[10px] flex items-center justify-center">
-                <span className="text-xl">📈</span>
+          <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+            <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-gradient-to-tr from-indigo-600 via-indigo-500 to-cyan-400 p-0.5 shadow-lg shadow-indigo-500/20 flex items-center justify-center shrink-0">
+              <div className="w-full h-full bg-slate-950 rounded-[9px] sm:rounded-[10px] flex items-center justify-center">
+                <span className="text-base sm:text-xl">📈</span>
               </div>
             </div>
             <div className="min-w-0">
-              <div className="flex items-center gap-2">
-                <h1 className="font-bold text-base sm:text-lg text-white tracking-tight whitespace-nowrap">
+              <div className="flex items-center gap-1.5">
+                <h1 className="font-bold text-sm sm:text-base lg:text-lg text-white tracking-tight whitespace-nowrap">
                   台股 ETF 分析器
                 </h1>
               </div>
-              <p className="text-xs text-slate-400 hidden lg:block whitespace-nowrap">
+              <p className="text-xs text-slate-400 hidden xl:block whitespace-nowrap">
                 Guyton-Klinger 護欄 · 蒙地卡羅模擬
               </p>
             </div>
           </div>
 
           {/* 右側快捷控制開關 */}
-          <div className="flex items-center gap-2 sm:gap-2.5 shrink-0">
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
             {/* 返回記帳助手 */}
             <a
               href="https://money-tracker.xyz"
@@ -69,16 +69,18 @@ export const Navbar: React.FC<NavbarProps> = ({ onOpenSettings }) => {
             {/* Google 登入與雲端同步 */}
             <GoogleAuthButton />
 
-            {/* 實質/名目快速切換鈕 */}
+            {/* 實質/名目快速切換鈕 (響應式標籤：手機只顯示 short text，不折行不擠壓) */}
             <button
               onClick={() => setIsRealMode(!isRealMode)}
-              className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 border shrink-0 whitespace-nowrap ${isRealMode
+              className={`px-2 sm:px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1 border shrink-0 whitespace-nowrap ${isRealMode
                 ? "bg-cyan-500/15 text-cyan-300 border-cyan-500/30"
                 : "bg-slate-800/60 text-slate-400 border-slate-700/60 hover:text-slate-200"
                 }`}
               title="切換名目值 vs 扣除通膨實質值"
             >
-              <span>{isRealMode ? "🛡️ 實質購買力" : "💵 名目金流"}</span>
+              <span>{isRealMode ? "🛡️" : "💵"}</span>
+              <span className="hidden sm:inline">{isRealMode ? "實質購買力" : "名目金流"}</span>
+              <span className="sm:hidden">{isRealMode ? "實質" : "名目"}</span>
             </button>
 
             {/* 稅率狀態徽章 */}

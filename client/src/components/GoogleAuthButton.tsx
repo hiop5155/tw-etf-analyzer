@@ -43,7 +43,7 @@ export const GoogleAuthButton: React.FC = () => {
               shape: "pill",
               text: "signin",
               locale: "zh_TW",
-              width: 130,
+              width: 105,
             });
           }
         } catch (e) {
