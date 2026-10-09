@@ -39,12 +39,33 @@ const MainContent: React.FC = () => {
       </main>
 
       {/* 頁尾 Footer */}
-      <footer className="border-t border-slate-900 bg-slate-950/60 py-6 text-center text-xs text-slate-500">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
+      <footer className="border-t border-slate-900 bg-slate-950/80 py-6 text-xs text-slate-500">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-4">
+          <div className="flex flex-col sm:flex-row items-center gap-2 sm:gap-3 text-center sm:text-left">
+            <span className="font-semibold text-slate-300">Money Tracker AI Studio</span>
+            <span className="hidden sm:inline text-slate-800">|</span>
             <span>📈 台股 ETF 分析與動態退休提領系統</span>
-            <span className="text-slate-700">|</span>
+            <span className="hidden sm:inline text-slate-800">|</span>
+            <span>© {new Date().getFullYear()} All rights reserved.</span>
           </div>
+
+          <div className="flex flex-wrap items-center justify-center gap-4 text-slate-400">
+            <a href="https://money-tracker.xyz" className="hover:text-indigo-400 transition-colors">
+              Money Tracker App
+            </a>
+            <a href="https://money-tracker.xyz/blog" className="hover:text-indigo-400 transition-colors">
+              理財知識庫
+            </a>
+            <a href="https://money-tracker.xyz/privacy" className="hover:text-indigo-400 transition-colors">
+              隱私權政策
+            </a>
+            <a href="mailto:contact@money-tracker.xyz" className="hover:text-indigo-400 transition-colors">
+              聯絡我們 (contact@money-tracker.xyz)
+            </a>
+          </div>
+        </div>
+        <div className="mt-3 text-center text-[11px] text-slate-600">
+          Powered by Anthropic Claude 3.5 &amp; Cloudflare Edge
         </div>
       </footer>
     </div>
