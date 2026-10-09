@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useRef, useCallb
 import { TaxFeeConfig } from "../core/types";
 import { DEFAULT_BUY_FEE_RATE, DEFAULT_SELL_FEE_RATE, PRESET_PORTFOLIOS } from "../core/constants";
 import { getSharedAuth, setSharedAuth, clearSharedAuth } from "../core/cookieAuth";
+import { API_BASE } from "../services/api";
 
 export type TabKey =
   | "performance"
@@ -278,7 +279,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 8000);
-      const res = await fetch("/api/portfolio", {
+      const res = await fetch(`${API_BASE}/portfolio`, {
         headers: { Authorization: `Bearer ${authToken}` },
         signal: controller.signal,
       });
@@ -302,7 +303,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         // 雲端尚無資料，將本地目前設定上傳
         const currentJson = JSON.stringify(currentSettingsRef.current);
         lastSyncedJsonRef.current = currentJson;
-        await fetch("/api/portfolio", {
+        await fetch(`${API_BASE}/portfolio`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -356,7 +357,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 8000);
 
-        const res = await fetch("/api/portfolio", {
+        const res = await fetch(`${API_BASE}/portfolio`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -407,7 +408,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Google 登入處理
   const loginWithGoogle = async (credential: string): Promise<boolean> => {
     try {
-      const res = await fetch("/api/auth/google", {
+      const res = await fetch(`${API_BASE}/auth/google`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ credential }),
@@ -456,7 +457,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setSyncStatus("syncing");
     try {
       const current = getCurrentSettings();
-      const res = await fetch("/api/portfolio", {
+      const res = await fetch(`${API_BASE}/portfolio`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

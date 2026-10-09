@@ -38,6 +38,8 @@ function setLocalCache<T>(key: string, data: T): void {
   }
 }
 
+export const API_BASE = (typeof window !== 'undefined' && window.location.pathname.startsWith('/calc')) ? '/calc/api' : '/api';
+
 /**
  * 獲取還原除權息後的歷史收盤價序列
  */
@@ -53,7 +55,7 @@ export async function fetchAdjustedPrices(stockId: string): Promise<PricePoint[]
     return cached;
   }
 
-  const res = await fetch(`/api/stock/adjusted?id=${encodeURIComponent(cleanId)}`);
+  const res = await fetch(`${API_BASE}/stock/adjusted?id=${encodeURIComponent(cleanId)}`);
   if (!res.ok) {
     throw new Error(`無法取得 ${cleanId} 股價資料 (${res.status})`);
   }
@@ -81,7 +83,7 @@ export async function fetchDividends(stockId: string): Promise<DividendRecord[]>
     return cached;
   }
 
-  const res = await fetch(`/api/stock/dividends?id=${encodeURIComponent(cleanId)}`);
+  const res = await fetch(`${API_BASE}/stock/dividends?id=${encodeURIComponent(cleanId)}`);
   if (!res.ok) {
     throw new Error(`無法取得 ${cleanId} 股利資料 (${res.status})`);
   }
@@ -107,7 +109,7 @@ export async function fetchStockInfo(stockId: string): Promise<StockInfo> {
     return cached;
   }
 
-  const res = await fetch(`/api/stock/info?id=${encodeURIComponent(cleanId)}`);
+  const res = await fetch(`${API_BASE}/stock/info?id=${encodeURIComponent(cleanId)}`);
   if (!res.ok) {
     return { stock_id: cleanId, stock_name: cleanId };
   }
@@ -121,3 +123,4 @@ export async function fetchStockInfo(stockId: string): Promise<StockInfo> {
   setLocalCache(cacheKey, info);
   return info;
 }
+

@@ -59,11 +59,12 @@ export const Navbar: React.FC<NavbarProps> = ({ onOpenSettings }) => {
           <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
             {/* 返回記帳助手 */}
             <a
-              href="https://money-tracker.xyz"
-              className="px-2.5 py-1.5 rounded-lg text-xs font-medium text-slate-300 hover:text-white bg-slate-900 border border-slate-800 hover:border-slate-700 transition-colors hidden md:flex items-center gap-1.5 shrink-0 whitespace-nowrap"
+              href={(typeof window !== 'undefined' && window.location.pathname.startsWith('/calc')) ? '/' : 'https://money-tracker.xyz'}
+              className="px-2 sm:px-2.5 py-1.5 rounded-lg text-xs font-medium text-slate-300 hover:text-white bg-slate-900 border border-slate-800 hover:border-slate-700 transition-colors flex items-center gap-1.5 shrink-0 whitespace-nowrap"
+              title="返回 Money Tracker 記帳助手"
             >
-              <span>💰 記帳助手</span>
-              <ExternalLink className="w-3 h-3 text-slate-400" />
+              <span>💰</span>
+              <span className="hidden sm:inline">記帳助手</span>
             </a>
 
             {/* Google 登入與雲端同步 */}

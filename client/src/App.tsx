@@ -50,13 +50,22 @@ const MainContent: React.FC = () => {
           </div>
 
           <div className="flex flex-wrap items-center justify-center gap-4 text-slate-400">
-            <a href="https://money-tracker.xyz" className="hover:text-indigo-400 transition-colors">
+            <a
+              href={(typeof window !== 'undefined' && window.location.pathname.startsWith('/calc')) ? '/' : 'https://money-tracker.xyz'}
+              className="hover:text-indigo-400 transition-colors"
+            >
               Money Tracker App
             </a>
-            <a href="https://money-tracker.xyz/blog" className="hover:text-indigo-400 transition-colors">
+            <a
+              href={(typeof window !== 'undefined' && window.location.pathname.startsWith('/calc')) ? '/blog' : 'https://money-tracker.xyz/blog'}
+              className="hover:text-indigo-400 transition-colors"
+            >
               理財知識庫
             </a>
-            <a href="https://money-tracker.xyz/privacy" className="hover:text-indigo-400 transition-colors">
+            <a
+              href={(typeof window !== 'undefined' && window.location.pathname.startsWith('/calc')) ? '/privacy' : 'https://money-tracker.xyz/privacy'}
+              className="hover:text-indigo-400 transition-colors"
+            >
               隱私權政策
             </a>
             <a href="mailto:contact@money-tracker.xyz" className="hover:text-indigo-400 transition-colors">
