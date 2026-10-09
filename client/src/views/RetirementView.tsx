@@ -291,25 +291,49 @@ export const RetirementView: React.FC = () => {
 
           {/* 退休年限 */}
           <div className="space-y-1.5">
-            <div className="flex justify-between">
+            <div className="flex justify-between items-center">
               <label className="text-xs font-medium text-slate-300">退休規劃年限</label>
-              <span className="text-xs font-mono font-bold text-indigo-400">
-                {simulationYears} 年
-              </span>
+              <div className="flex items-center gap-1">
+                <NumericInput
+                  value={simulationYears}
+                  min={5}
+                  max={80}
+                  step={1}
+                  onCommit={(val) => setSimulationYears(Math.max(5, Math.min(80, Math.round(val))))}
+                  placeholder="30"
+                  className="w-16 bg-slate-950 border border-slate-700 px-2 py-0.5 rounded-lg text-xs font-mono font-bold text-indigo-400 text-right focus:outline-none focus:border-indigo-500"
+                />
+                <span className="text-xs font-mono font-bold text-indigo-400">年</span>
+              </div>
             </div>
             <input
               type="range"
-              min="15"
-              max="40"
+              min="10"
+              max="70"
               step="1"
               value={simulationYears}
-              onChange={(e) => setSimulationYears(parseInt(e.target.value) || 20)}
+              onChange={(e) => setSimulationYears(parseInt(e.target.value) || 30)}
               className="w-full accent-indigo-500 bg-slate-800 h-2 rounded-lg cursor-pointer"
             />
             <div className="flex justify-between text-[10px] text-slate-500">
-              <span>15年</span>
-              <span>30年 (標準退休)</span>
-              <span>40年 (FIRE早退)</span>
+              <span>10年</span>
+              <span>30年</span>
+              <span>50年</span>
+              <span>70年</span>
+            </div>
+            <div className="flex flex-wrap gap-1.5 pt-0.5">
+              {[20, 30, 40, 50, 60, 70].map((v) => (
+                <button
+                  key={v}
+                  onClick={() => setSimulationYears(v)}
+                  className={`px-2 py-0.5 rounded text-[11px] transition-colors ${simulationYears === v
+                    ? "bg-indigo-600 text-white font-semibold"
+                    : "bg-slate-800 hover:bg-slate-700 text-slate-300"
+                    }`}
+                >
+                  {v}年
+                </button>
+              ))}
             </div>
           </div>
         </div>
@@ -336,21 +360,19 @@ export const RetirementView: React.FC = () => {
             <span className="text-slate-400">隨機抽樣模型:</span>
             <button
               onClick={() => setDistModel("normal")}
-              className={`px-2.5 py-1 rounded-lg ${
-                distModel === "normal"
-                  ? "bg-indigo-600 text-white font-semibold"
-                  : "bg-slate-800 text-slate-400"
-              }`}
+              className={`px-2.5 py-1 rounded-lg ${distModel === "normal"
+                ? "bg-indigo-600 text-white font-semibold"
+                : "bg-slate-800 text-slate-400"
+                }`}
             >
               標準常態分佈 N(μ,σ)
             </button>
             <button
               onClick={() => setDistModel("bootstrap")}
-              className={`px-2.5 py-1 rounded-lg ${
-                distModel === "bootstrap"
-                  ? "bg-indigo-600 text-white font-semibold"
-                  : "bg-slate-800 text-slate-400"
-              }`}
+              className={`px-2.5 py-1 rounded-lg ${distModel === "bootstrap"
+                ? "bg-indigo-600 text-white font-semibold"
+                : "bg-slate-800 text-slate-400"
+                }`}
             >
               歷史月報酬拔靴法 (Bootstrap)
             </button>
@@ -383,7 +405,7 @@ export const RetirementView: React.FC = () => {
         <MetricCard
           title="P50 期末資產中位數"
           value={`NT$ ${(
-            mcResult.port_pct.p50[simulationYears - 1] / 10000
+            (mcResult.port_pct.p50[simulationYears - 1] ?? 0) / 10000
           ).toLocaleString(undefined, { maximumFractionDigits: 0 })} 萬`}
           subLabel="基準路徑"
           subValue={`起點 ${(initialAsset / 10000).toFixed(0)} 萬`}
@@ -393,7 +415,7 @@ export const RetirementView: React.FC = () => {
         />
         <MetricCard
           title="P10 悲觀情境月提領"
-          value={`NT$ ${mcResult.wd_pct.p10[simulationYears - 1].toLocaleString()}`}
+          value={`NT$ ${(mcResult.wd_pct.p10[simulationYears - 1] ?? 0).toLocaleString()}`}
           subLabel="護欄減額底限"
           subValue={`第 ${simulationYears} 年`}
           icon={AlertTriangle}
@@ -586,11 +608,10 @@ export const RetirementView: React.FC = () => {
               <button
                 key={item.p}
                 onClick={() => setRepPct(item.p)}
-                className={`px-3 py-1.5 rounded-xl text-xs font-medium transition-all ${
-                  repPct === item.p
-                    ? "bg-indigo-600 text-white font-semibold"
-                    : "bg-slate-800 text-slate-400 hover:text-slate-200"
-                }`}
+                className={`px-3 py-1.5 rounded-xl text-xs font-medium transition-all ${repPct === item.p
+                  ? "bg-indigo-600 text-white font-semibold"
+                  : "bg-slate-800 text-slate-400 hover:text-slate-200"
+                  }`}
               >
                 {item.label}
               </button>
@@ -615,11 +636,10 @@ export const RetirementView: React.FC = () => {
                 <tr key={row.年度} className="hover:bg-slate-800/40">
                   <td className="py-2 px-3 font-semibold text-white">{row.年度}</td>
                   <td
-                    className={`py-2 px-3 ${
-                      row["年化報酬 %"].startsWith("-")
-                        ? "text-rose-400"
-                        : "text-emerald-400"
-                    }`}
+                    className={`py-2 px-3 ${row["年化報酬 %"].startsWith("-")
+                      ? "text-rose-400"
+                      : "text-emerald-400"
+                      }`}
                   >
                     {row["年化報酬 %"]}
                   </td>
@@ -633,15 +653,14 @@ export const RetirementView: React.FC = () => {
                     {row["提領率 %"]}
                   </td>
                   <td
-                    className={`py-2 px-3 text-right font-medium ${
-                      row.護欄觸發.includes("減")
-                        ? "text-amber-400"
-                        : row.護欄觸發.includes("加")
+                    className={`py-2 px-3 text-right font-medium ${row.護欄觸發.includes("減")
+                      ? "text-amber-400"
+                      : row.護欄觸發.includes("加")
                         ? "text-emerald-400"
                         : row.護欄觸發.includes("耗盡")
-                        ? "text-rose-500 font-bold"
-                        : "text-slate-500"
-                    }`}
+                          ? "text-rose-500 font-bold"
+                          : "text-slate-500"
+                      }`}
                   >
                     {row.護欄觸發}
                   </td>

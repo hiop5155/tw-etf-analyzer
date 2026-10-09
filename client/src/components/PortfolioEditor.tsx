@@ -176,9 +176,12 @@ export const PortfolioEditor: React.FC<PortfolioEditorProps> = ({
       {/* 持股清單表格 */}
       <div className="space-y-2 pt-1">
         <div className="grid grid-cols-12 gap-2 text-xs font-medium text-slate-400 px-3 py-1">
-          <div className="col-span-4 sm:col-span-3">標的代號</div>
-          <div className="col-span-5 sm:col-span-6">配置比例 (可直接拖動或手動輸入 %)</div>
-          <div className="col-span-3 text-right">操作</div>
+          <div className="col-span-5 sm:col-span-3">標的代號</div>
+          <div className="col-span-5 sm:col-span-6">
+            <span className="hidden sm:inline">配置比例 (可拖動或手動輸入 %)</span>
+            <span className="sm:hidden">配置比例 (%)</span>
+          </div>
+          <div className="col-span-2 sm:col-span-3 text-right">操作</div>
         </div>
 
         {Object.entries(portfolioAllocations).map(([stockId, weight]) => {
@@ -188,16 +191,54 @@ export const PortfolioEditor: React.FC<PortfolioEditorProps> = ({
           return (
             <div
               key={stockId}
-              className="grid grid-cols-12 gap-2 items-center bg-slate-900/80 border border-slate-800/80 hover:border-slate-700 p-2.5 rounded-xl transition-all"
+              className="bg-slate-900/80 border border-slate-800/80 hover:border-slate-700 p-2.5 rounded-xl transition-all space-y-2 sm:space-y-0"
             >
-              {/* 代號與名稱 */}
-              <div className="col-span-4 sm:col-span-3 flex flex-col">
-                <span className="font-mono font-bold text-white text-sm">{stockId}</span>
-                <span className="text-[11px] text-slate-400 truncate">{name}</span>
+              <div className="grid grid-cols-12 gap-2 items-center">
+                {/* 代號與名稱 */}
+                <div className="col-span-5 sm:col-span-3 flex flex-col">
+                  <span className="font-mono font-bold text-white text-sm">{stockId}</span>
+                  <span className="text-[11px] text-slate-400 truncate">{name}</span>
+                </div>
+
+                {/* 配置比例 滑桿 (桌機) 與數字輸入 */}
+                <div className="col-span-5 sm:col-span-6 flex items-center justify-end sm:justify-start gap-2">
+                  <input
+                    type="range"
+                    min="0"
+                    max="100"
+                    step="1"
+                    value={pct}
+                    onChange={(e) => handleWeightChange(stockId, parseFloat(e.target.value) || 0)}
+                    className="w-full accent-indigo-500 cursor-pointer hidden sm:block"
+                  />
+                  <div className="flex items-center gap-1 shrink-0">
+                    <NumericInput
+                      value={pct}
+                      min={0}
+                      max={100}
+                      step={1}
+                      onCommit={(val) => handleWeightChange(stockId, val)}
+                      placeholder="0"
+                      className="w-14 sm:w-16 bg-slate-950 border border-slate-700 px-2 py-1 rounded-lg text-sm font-mono font-bold text-indigo-300 text-right focus:outline-none focus:border-indigo-500"
+                    />
+                    <span className="text-xs text-slate-400 font-mono">%</span>
+                  </div>
+                </div>
+
+                {/* 刪除按鈕 */}
+                <div className="col-span-2 sm:col-span-3 flex items-center justify-end">
+                  <button
+                    onClick={() => handleRemoveStock(stockId)}
+                    className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 transition-colors"
+                    title="刪除標的"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
               </div>
 
-              {/* 配置比例 滑桿與數字輸入 */}
-              <div className="col-span-5 sm:col-span-6 flex items-center gap-2">
+              {/* 手機版專屬全寬滑桿 (方便大拇指拖動調節，不擠壓版面) */}
+              <div className="pt-1 sm:hidden">
                 <input
                   type="range"
                   min="0"
@@ -205,31 +246,8 @@ export const PortfolioEditor: React.FC<PortfolioEditorProps> = ({
                   step="1"
                   value={pct}
                   onChange={(e) => handleWeightChange(stockId, parseFloat(e.target.value) || 0)}
-                  className="w-full accent-indigo-500 cursor-pointer hidden sm:block"
+                  className="w-full accent-indigo-500 cursor-pointer h-1.5 bg-slate-800 rounded-lg"
                 />
-                <div className="flex items-center gap-1 shrink-0">
-                  <NumericInput
-                    value={pct}
-                    min={0}
-                    max={100}
-                    step={1}
-                    onCommit={(val) => handleWeightChange(stockId, val)}
-                    placeholder="0"
-                    className="w-16 bg-slate-950 border border-slate-700 px-2 py-1 rounded-lg text-sm font-mono font-bold text-indigo-300 text-right focus:outline-none focus:border-indigo-500"
-                  />
-                  <span className="text-xs text-slate-400 font-mono">%</span>
-                </div>
-              </div>
-
-              {/* 刪除按鈕 */}
-              <div className="col-span-3 flex items-center justify-end">
-                <button
-                  onClick={() => handleRemoveStock(stockId)}
-                  className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 transition-colors"
-                  title="刪除標的"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
               </div>
             </div>
           );

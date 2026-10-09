@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useRef, useCallback } from "react";
 import {
   Target,
   Calendar,
@@ -46,6 +46,16 @@ export const TargetView: React.FC = () => {
   const [holdingsCagr, setHoldingsCagr] = useState<number>(8.0); // 目前已持有組合加權年化 %
   const [monthlyExpense, setMonthlyExpense] = useState<number>(60_000); // 預期月支出
   const [swr, setSwr] = useState<number>(4.0); // 提領率 %
+
+  const isCagrManuallyModified = useRef<boolean>(false);
+
+  // 當持股組合加權年化算出或變動時，預設自動連動同步定投報酬率
+  const handleWeightedCagrChange = useCallback((c: number) => {
+    setHoldingsCagr(c);
+    if (!isCagrManuallyModified.current && c > 0) {
+      setExpectedCagr(c);
+    }
+  }, []);
 
   // 給定月支出與 SWR 反推目標資產
   const handleApplyFromExpense = () => {
@@ -140,8 +150,11 @@ export const TargetView: React.FC = () => {
 
       {/* 目前持股明細編輯區 (自動計算現有資產與年化報酬) */}
       <HoldingsEditor
-        onApplyCagr={(c) => setExpectedCagr(c)}
-        onWeightedCagrChange={(c) => setHoldingsCagr(c)}
+        onApplyCagr={(c) => {
+          isCagrManuallyModified.current = false;
+          setExpectedCagr(c);
+        }}
+        onWeightedCagrChange={handleWeightedCagrChange}
       />
 
       {/* 輸入控制面板 */}
@@ -227,27 +240,62 @@ export const TargetView: React.FC = () => {
 
             {/* 預期年化報酬率 */}
             <div className="space-y-1.5">
-              <div className="flex justify-between">
-                <label className="text-xs font-medium text-slate-300">
-                  預期年化報酬 (CAGR)
-                </label>
-                <span className="text-xs font-mono font-bold text-emerald-400">
-                  {expectedCagr.toFixed(1)}%
-                </span>
+              <div className="flex justify-between items-center">
+                <div className="flex items-center gap-1.5">
+                  <label className="text-xs font-medium text-slate-300">
+                    定期定額預期年化 (CAGR)
+                  </label>
+                  {Math.abs(expectedCagr - holdingsCagr) < 0.05 ? (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 font-mono">
+                      已同步持股
+                    </span>
+                  ) : (
+                    <button
+                      onClick={() => {
+                        isCagrManuallyModified.current = false;
+                        setExpectedCagr(holdingsCagr);
+                      }}
+                      className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-indigo-300 hover:text-white transition-colors flex items-center gap-0.5"
+                      title="重設並同步回上方持股組合加權年化"
+                    >
+                      <span>🔗 同步持股</span>
+                      <span className="font-mono">({holdingsCagr.toFixed(1)}%)</span>
+                    </button>
+                  )}
+                </div>
+                <div className="flex items-center gap-1">
+                  <NumericInput
+                    value={expectedCagr}
+                    min={0.1}
+                    max={50.0}
+                    step={0.1}
+                    onCommit={(val) => {
+                      isCagrManuallyModified.current = true;
+                      setExpectedCagr(val);
+                    }}
+                    placeholder="8.0"
+                    className="w-16 bg-slate-950 border border-slate-700 px-2 py-0.5 rounded-lg text-xs font-mono font-bold text-emerald-400 text-right focus:outline-none focus:border-emerald-500"
+                  />
+                  <span className="text-xs font-mono font-bold text-emerald-400">%</span>
+                </div>
               </div>
               <input
                 type="range"
-                min="3.0"
-                max="15.0"
-                step="0.5"
+                min="1.0"
+                max="25.0"
+                step="0.1"
                 value={expectedCagr}
-                onChange={(e) => setExpectedCagr(parseFloat(e.target.value) || 0)}
+                onChange={(e) => {
+                  isCagrManuallyModified.current = true;
+                  setExpectedCagr(parseFloat(e.target.value) || 0);
+                }}
                 className="w-full accent-emerald-500 bg-slate-800 h-2 rounded-lg cursor-pointer"
               />
               <div className="flex justify-between text-[10px] text-slate-500">
-                <span>3% (保守)</span>
+                <span>5% (保守)</span>
                 <span>8% (大盤均值)</span>
-                <span>15% (強勢)</span>
+                <span>15%</span>
+                <span>20%+ (積極)</span>
               </div>
             </div>
           </div>
